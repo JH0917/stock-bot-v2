@@ -1,4 +1,4 @@
-"""Stock Bot v2 — RSI(2) + ETF Momentum 자동매매"""
+"""Stock Bot v2 — RSI(2) + ETF Momentum 자동매매 봇"""
 
 import logging
 from contextlib import asynccontextmanager
