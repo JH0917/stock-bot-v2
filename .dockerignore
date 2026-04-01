@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.env
+.git/
+.github/
+data/*.json
+.venv/
+*.egg-info/
+dist/
+backtest/

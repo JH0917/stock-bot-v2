@@ -1,0 +1,12 @@
+services:
+  stock-bot-v2:
+    build: .
+    ports:
+      - "8002:8002"
+    environment:
+      - TZ=Asia/Seoul
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
