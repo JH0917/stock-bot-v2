@@ -1,48 +1,37 @@
-"""과거 데이터 수집 (pykrx + KRX 직접 조회)"""
+"""과거 데이터 수집 (pykrx + 네이버 금융)"""
 
 import logging
-import io
 from datetime import datetime, timedelta
 from pykrx import stock as pykrx
 import httpx
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-# KRX 종목 목록 캐시 (하루 1회만 조회)
+# 종목 목록 캐시 (하루 1회만 조회)
 _symbol_cache = {"date": "", "kospi": [], "kosdaq": []}
 
 
-def _fetch_krx_symbols(market: str) -> list[str]:
-    """KRX에서 종목 코드 직접 조회 (KOSPI/KOSDAQ)"""
-    try:
-        # KRX 정보데이터시스템 API
-        url = "http://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
-        mkt_id = "STK" if market == "KOSPI" else "KSQ"
-        resp = httpx.post(url, data={
-            "bld": "dbms/MDC/STAT/standard/MDCSTAT01501",
-            "mktId": mkt_id,
-            "share": "1",
-        }, timeout=15)
-        # KRX 응답이 EUC-KR일 수 있음
+def _fetch_naver_symbols(sosok: int, pages: int) -> list[str]:
+    """네이버 금융 시총 상위 종목 조회
+    sosok: 0=KOSPI, 1=KOSDAQ
+    """
+    symbols = []
+    headers = {"User-Agent": "Mozilla/5.0"}
+    for page in range(1, pages + 1):
         try:
-            data = resp.json()
-        except Exception:
-            text = resp.content.decode("euc-kr", errors="replace")
-            import json
-            data = json.loads(text)
-        rows = data.get("OutBlock_1", [])
-        # 종목코드 추출 (보통주만, 우선주/ETF/ETN 제외)
-        symbols = []
-        for row in rows:
-            code = row.get("ISU_SRT_CD", "")
-            name = row.get("ISU_ABBRV", "")
-            # 6자리 숫자 코드만 (ETF/ETN 제외)
-            if len(code) == 6 and code.isdigit():
-                symbols.append(code)
-        return symbols
-    except Exception as e:
-        logger.error(f"KRX {market} 종목 조회 실패: {e}")
-        return []
+            url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={page}"
+            resp = httpx.get(url, headers=headers, timeout=10)
+            soup = BeautifulSoup(resp.content.decode("euc-kr", errors="replace"), "html.parser")
+            for a in soup.select("a.tltle"):
+                href = a.get("href", "")
+                if "code=" in href:
+                    code = href.split("code=")[1][:6]
+                    if code.isdigit():
+                        symbols.append(code)
+        except Exception as e:
+            logger.error(f"네이버 금융 종목 조회 실패 (sosok={sosok}, page={page}): {e}")
+    return symbols
 
 
 def _get_cached_symbols(market: str) -> list[str]:
@@ -51,7 +40,9 @@ def _get_cached_symbols(market: str) -> list[str]:
     key = "kospi" if market == "KOSPI" else "kosdaq"
 
     if _symbol_cache["date"] != today or not _symbol_cache[key]:
-        symbols = _fetch_krx_symbols(market)
+        sosok = 0 if market == "KOSPI" else 1
+        pages = 4 if market == "KOSPI" else 3  # 50종목/페이지
+        symbols = _fetch_naver_symbols(sosok, pages)
         if symbols:
             _symbol_cache[key] = symbols
             _symbol_cache["date"] = today
@@ -61,16 +52,13 @@ def _get_cached_symbols(market: str) -> list[str]:
 
 
 def get_kospi200_symbols() -> list[str]:
-    """KOSPI 상위 200 종목 코드 리스트"""
-    all_symbols = _get_cached_symbols("KOSPI")
-    # 시총 상위 200개 근사 (KRX 전체 목록에서 앞쪽이 대형주)
-    return all_symbols[:200] if len(all_symbols) > 200 else all_symbols
+    """KOSPI 시총 상위 200 종목"""
+    return _get_cached_symbols("KOSPI")
 
 
 def get_kosdaq150_symbols() -> list[str]:
-    """KOSDAQ 상위 150 종목 코드 리스트"""
-    all_symbols = _get_cached_symbols("KOSDAQ")
-    return all_symbols[:150] if len(all_symbols) > 150 else all_symbols
+    """KOSDAQ 시총 상위 150 종목"""
+    return _get_cached_symbols("KOSDAQ")
 
 
 def get_daily_ohlcv(symbol: str, days: int = 250) -> dict:
@@ -100,18 +88,6 @@ def get_daily_ohlcv(symbol: str, days: int = 250) -> dict:
         return {}
 
 
-def get_market_cap(symbol: str) -> int:
-    """시가총액 조회"""
-    today = datetime.now().strftime("%Y%m%d")
-    try:
-        df = pykrx.get_market_cap(today, today, symbol)
-        if df.empty:
-            return 0
-        return int(df["시가총액"].iloc[-1])
-    except Exception:
-        return 0
-
-
 def get_trade_value(symbol: str) -> int:
     """전일 거래대금 조회"""
     today = datetime.now().strftime("%Y%m%d")
@@ -119,10 +95,9 @@ def get_trade_value(symbol: str) -> int:
         df = pykrx.get_market_ohlcv(today, today, symbol)
         if df.empty:
             return 0
-        # pykrx 버전에 따라 '거래대금' 컬럼이 없을 수 있음
+        # 거래대금 = 종가 * 거래량으로 근사
         if "거래대금" in df.columns:
             return int(df["거래대금"].iloc[-1])
-        # 거래대금 = 종가 * 거래량으로 근사
         return int(df["종가"].iloc[-1] * df["거래량"].iloc[-1])
     except Exception:
         return 0
