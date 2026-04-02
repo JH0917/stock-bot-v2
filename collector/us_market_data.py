@@ -93,17 +93,9 @@ def bulk_download(symbols: list[str], days: int = 120, chunk_size: int = 100) ->
             time.sleep(wait)
 
         if df is None or df.empty:
-            # 벌크 실패 → 개별 다운로드 폴백 (종목 사이 5초 딜레이)
-            logger.warning(f"bulk 실패, 개별 다운로드 전환: {len(chunk)}종목")
-            for idx, sym in enumerate(chunk):
-                if idx > 0:
-                    time.sleep(5)  # 종목 간 5초 딜레이
-                data = _download_single_with_retry(sym, days + 30)
-                if data:
-                    _save_cache(sym, data)
-                    result[sym] = _trim_data(data, days)
-                else:
-                    failed_count += 1
+            # 벌크 3회 실패 → IP 차단 가능성 높음, 개별 재시도 스킵
+            logger.warning(f"yfinance bulk 3회 실패, 개별 재시도 생략 (KIS 폴백으로 전환)")
+            failed_count += len(chunk)
             continue
 
         for sym in chunk:
