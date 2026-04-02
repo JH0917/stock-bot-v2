@@ -23,7 +23,13 @@ def _fetch_krx_symbols(market: str) -> list[str]:
             "mktId": mkt_id,
             "share": "1",
         }, timeout=15)
-        data = resp.json()
+        # KRX 응답이 EUC-KR일 수 있음
+        try:
+            data = resp.json()
+        except Exception:
+            text = resp.content.decode("euc-kr", errors="replace")
+            import json
+            data = json.loads(text)
         rows = data.get("OutBlock_1", [])
         # 종목코드 추출 (보통주만, 우선주/ETF/ETN 제외)
         symbols = []
