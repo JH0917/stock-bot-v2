@@ -207,6 +207,64 @@ def _is_cache_fresh(cache: dict, max_hours: int = 20) -> bool:
         return False
 
 
+async def kis_download(kis_client, symbols: list[str], days: int = 90,
+                       exchange_map: dict = None) -> dict[str, dict]:
+    """KIS API로 해외주식 일봉 다운로드 (yfinance 폴백용)
+
+    Args:
+        kis_client: KISClient 인스턴스
+        symbols: 종목 리스트
+        days: 필요한 일수
+        exchange_map: {symbol: exchange} 매핑 (없으면 NAS 기본)
+
+    Returns: {symbol: {dates, opens, highs, lows, closes, volumes}}
+    """
+    _ensure_dir()
+    result = {}
+    exchange_map = exchange_map or {}
+
+    for i, sym in enumerate(symbols):
+        if i > 0:
+            time.sleep(0.3)  # KIS API 초당 20건 제한 대응
+
+        exchange = exchange_map.get(sym, "NAS")
+        try:
+            resp = await kis_client.get_us_daily_chart(sym, exchange=exchange)
+            if resp.get("rt_cd") != "0":
+                logger.warning(f"[KIS] {sym} 일봉 조회 실패: {resp.get('msg1', '')}")
+                continue
+
+            output2 = resp.get("output2", [])
+            if not output2 or len(output2) < 20:
+                logger.warning(f"[KIS] {sym} 데이터 부족: {len(output2)}건")
+                continue
+
+            # 최신순 → 오래된순으로 뒤집기
+            output2 = list(reversed(output2))
+
+            # 빈 데이터 필터링
+            output2 = [r for r in output2 if r.get("clos") and float(r["clos"]) > 0]
+            if len(output2) < 20:
+                continue
+
+            data = {
+                "dates": [r["xymd"] for r in output2],
+                "opens": [round(float(r["open"]), 2) for r in output2],
+                "highs": [round(float(r["high"]), 2) for r in output2],
+                "lows": [round(float(r["low"]), 2) for r in output2],
+                "closes": [round(float(r["clos"]), 2) for r in output2],
+                "volumes": [int(r["tvol"]) for r in output2],
+            }
+            _save_cache(sym, data)
+            result[sym] = _trim_data(data, days)
+            logger.info(f"[KIS] {sym} 일봉 {len(output2)}건 확보")
+
+        except Exception as e:
+            logger.error(f"[KIS] {sym} 다운로드 실패: {e}")
+
+    return result
+
+
 def _trim_data(data: dict, days: int) -> dict:
     """최근 N일만 잘라서 반환"""
     if not data or not data.get("dates"):

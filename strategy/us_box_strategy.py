@@ -6,7 +6,7 @@
 
 import logging
 from datetime import datetime
-from collector.us_market_data import get_us_daily_ohlcv, bulk_download
+from collector.us_market_data import get_us_daily_ohlcv, bulk_download, kis_download
 from collector.us_universe import load_universe, fetch_us_universe, save_universe, is_universe_stale
 from strategy.us_box_screener import scan_box_candidates
 from strategy.indicators import atr, box_position_pct
@@ -35,8 +35,21 @@ class USBoxStrategy:
         target_symbols = priority
         logger.info(f"[US Box] 코인 관련주 스캔: {len(target_symbols)}종목")
 
-        # 3. 일봉 데이터 수집 (yfinance bulk)
+        # 3. 일봉 데이터 수집 (yfinance → KIS API 폴백)
         daily_data = bulk_download(target_symbols, days=config.US_BOX_LOOKBACK_DAYS + 30)
+        logger.info(f"[US Box] yfinance 수집: {len(daily_data)}종목")
+
+        # yfinance에서 못 가져온 종목은 KIS API로 폴백
+        missing = [s for s in target_symbols if s not in daily_data]
+        if missing:
+            logger.info(f"[US Box] KIS API 폴백: {len(missing)}종목 ({', '.join(missing[:5])}...)")
+            kis_data = await kis_download(
+                self.executor.kis, missing,
+                days=config.US_BOX_LOOKBACK_DAYS + 30,
+            )
+            daily_data.update(kis_data)
+            logger.info(f"[US Box] KIS 추가 확보: {len(kis_data)}종목")
+
         logger.info(f"[US Box] 데이터 수집 완료: {len(daily_data)}종목")
 
         # 4. 박스권 스캔
