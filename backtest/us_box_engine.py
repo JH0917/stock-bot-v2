@@ -173,9 +173,9 @@ class USBoxBacktestEngine:
             if sr["resistance_touches"] < config.US_BOX_MIN_TOUCHES:
                 continue
 
-            # Buy Zone
+            # Buy Zone (지지선 이탈 제외)
             bp = box_position_pct(last_close, sr["support"], sr["resistance"])
-            if bp > config.US_BOX_BUY_ZONE_PCT:
+            if bp < 0 or bp > config.US_BOX_BUY_ZONE_PCT:
                 continue
 
             # 반등 시그널 (간소화: 양봉 + RSI 상승)

@@ -123,8 +123,8 @@ def _filter_box_range(universe: list[dict], daily_data: dict[str, dict]) -> list
 
 
 def _filter_buy_zone(candidates: list[dict]) -> list[dict]:
-    """2단계: Buy Zone (하단 25%) 필터"""
-    return [c for c in candidates if c["box_pct"] <= config.US_BOX_BUY_ZONE_PCT]
+    """2단계: Buy Zone (하단 25%) 필터 — 지지선 이탈 종목 제외"""
+    return [c for c in candidates if 0 <= c["box_pct"] <= config.US_BOX_BUY_ZONE_PCT]
 
 
 def _filter_bounce_signal(candidates: list[dict], daily_data: dict[str, dict]) -> list[dict]:
