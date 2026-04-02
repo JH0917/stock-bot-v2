@@ -98,6 +98,6 @@ def get_trade_value(symbol: str) -> int:
         # 거래대금 = 종가 * 거래량으로 근사
         if "거래대금" in df.columns:
             return int(df["거래대금"].iloc[-1])
-        return int(df["종가"].iloc[-1] * df["거래량"].iloc[-1])
+        return int(float(df["종가"].iloc[-1]) * float(df["거래량"].iloc[-1]))
     except Exception:
         return 0
