@@ -23,6 +23,14 @@ TR_ID = {
     "volume_rank": "FHPST01710000",
     "investor": "FHKST01010900",
     "ccnl": "FHKST01010300",
+    # ─── 해외주식 ───
+    "us_price": "HHDFS00000300",
+    "us_daily_chart": "HHDFS76240000",
+    "us_buy": {"real": "JTTT1002U", "paper": "VTTT1002U"},
+    "us_sell": {"real": "JTTT1006U", "paper": "VTTT1006U"},
+    "us_balance": {"real": "JTTT3012R", "paper": "VTTT3012R"},
+    "us_order_status": {"real": "JTTT3018R", "paper": "VTTT3018R"},
+    "us_cancel": {"real": "JTTT1004U", "paper": "VTTT1004U"},
 }
 
 
@@ -215,3 +223,133 @@ class KISClient:
         })
         resp.raise_for_status()
         return resp.json()["approval_key"]
+
+    # ─── 해외주식 시세 조회 ───
+
+    async def get_us_price(self, symbol: str, exchange: str = "NAS") -> dict:
+        """해외주식 현재가 조회
+        exchange: NAS(나스닥), NYS(뉴욕), AMS(아멕스)
+        """
+        headers = await self._headers(self._tr_id("us_price"))
+        resp = await self.client.get(
+            "/uapi/overseas-price/v1/quotations/price",
+            headers=headers,
+            params={"AUTH": "", "EXCD": exchange, "SYMB": symbol},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def get_us_daily_chart(self, symbol: str, exchange: str = "NAS",
+                                  end_date: str = "", period: str = "D") -> dict:
+        """해외주식 기간별 시세 (일봉)
+        period: D=일, W=주, M=월
+        end_date: YYYYMMDD (빈 문자열이면 오늘)
+        """
+        headers = await self._headers(self._tr_id("us_daily_chart"))
+        params = {
+            "AUTH": "",
+            "EXCD": exchange,
+            "SYMB": symbol,
+            "GUBN": "0" if period == "D" else ("1" if period == "W" else "2"),
+            "BYMD": end_date,
+            "MODP": "1",  # 수정주가 반영
+        }
+        resp = await self.client.get(
+            "/uapi/overseas-price/v1/quotations/dailyprice",
+            headers=headers,
+            params=params,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # ─── 해외주식 주문 ───
+
+    async def buy_us(self, symbol: str, qty: int, price: float,
+                      exchange: str = "NAS") -> dict:
+        """해외주식 지정가 매수
+        exchange: NASD(나스닥), NYSE(뉴욕), AMEX(아멕스)
+        """
+        ovrs_excg = {"NAS": "NASD", "NYS": "NYSE", "AMS": "AMEX"}.get(exchange, "NASD")
+        headers = await self._headers(self._tr_id("us_buy"))
+        resp = await self.client.post(
+            "/uapi/overseas-stock/v1/trading/order",
+            headers=headers,
+            json={
+                "CANO": self._acnt_prefix(),
+                "ACNT_PRDT_CD": self._acnt_suffix(),
+                "OVRS_EXCG_CD": ovrs_excg,
+                "PDNO": symbol,
+                "ORD_DVSN": "00",  # 지정가
+                "ORD_QTY": str(qty),
+                "OVRS_ORD_UNPR": f"{price:.2f}",
+            },
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        logger.info(f"[US] 매수 주문: {symbol} {qty}주 @ ${price:.2f} -> {result.get('msg1', '')}")
+        return result
+
+    async def sell_us(self, symbol: str, qty: int, price: float,
+                       exchange: str = "NAS") -> dict:
+        """해외주식 지정가 매도"""
+        ovrs_excg = {"NAS": "NASD", "NYS": "NYSE", "AMS": "AMEX"}.get(exchange, "NASD")
+        headers = await self._headers(self._tr_id("us_sell"))
+        resp = await self.client.post(
+            "/uapi/overseas-stock/v1/trading/order",
+            headers=headers,
+            json={
+                "CANO": self._acnt_prefix(),
+                "ACNT_PRDT_CD": self._acnt_suffix(),
+                "OVRS_EXCG_CD": ovrs_excg,
+                "PDNO": symbol,
+                "ORD_DVSN": "00",
+                "ORD_QTY": str(qty),
+                "OVRS_ORD_UNPR": f"{price:.2f}",
+            },
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        logger.info(f"[US] 매도 주문: {symbol} {qty}주 @ ${price:.2f} -> {result.get('msg1', '')}")
+        return result
+
+    async def get_us_balance(self) -> dict:
+        """해외주식 잔고 조회"""
+        headers = await self._headers(self._tr_id("us_balance"))
+        resp = await self.client.get(
+            "/uapi/overseas-stock/v1/trading/inquire-balance",
+            headers=headers,
+            params={
+                "CANO": self._acnt_prefix(),
+                "ACNT_PRDT_CD": self._acnt_suffix(),
+                "OVRS_EXCG_CD": "NASD",
+                "TR_CRCY_CD": "USD",
+                "CTX_AREA_FK200": "",
+                "CTX_AREA_NK200": "",
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def cancel_us_order(self, order_no: str, symbol: str,
+                               exchange: str = "NAS") -> dict:
+        """해외주식 주문 취소"""
+        ovrs_excg = {"NAS": "NASD", "NYS": "NYSE", "AMS": "AMEX"}.get(exchange, "NASD")
+        headers = await self._headers(self._tr_id("us_cancel"))
+        resp = await self.client.post(
+            "/uapi/overseas-stock/v1/trading/order-rvsecncl",
+            headers=headers,
+            json={
+                "CANO": self._acnt_prefix(),
+                "ACNT_PRDT_CD": self._acnt_suffix(),
+                "OVRS_EXCG_CD": ovrs_excg,
+                "PDNO": symbol,
+                "ORGN_ODNO": order_no,
+                "RVSE_CNCL_DVSN_CD": "02",  # 02=취소
+                "ORD_QTY": "0",  # 전량
+                "OVRS_ORD_UNPR": "0",
+            },
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        logger.info(f"[US] 주문 취소: {order_no} -> {result.get('msg1', '')}")
+        return result

@@ -49,3 +49,15 @@ async def report():
 @app.get("/state")
 async def state():
     return scheduler.risk_manager.state
+
+
+@app.get("/us-box/candidates")
+async def us_box_candidates():
+    """최근 US 박스권 스캔 결과"""
+    return scheduler.us_box_strategy._candidates
+
+
+@app.get("/us-box/positions")
+async def us_box_positions():
+    """US 박스권 보유 포지션"""
+    return scheduler.risk_manager.get_positions(strategy="us_box")

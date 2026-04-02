@@ -65,12 +65,15 @@ class RiskManager:
         if self.state.get("date") != today:
             self.state["daily_pnl"] = 0
             self.state["daily_trades"] = 0
+            self.state["us_daily_pnl"] = 0
             self.state["date"] = today
         if self.state.get("week") != week:
             self.state["weekly_pnl"] = 0
+            self.state["us_weekly_pnl"] = 0
             self.state["week"] = week
         if self.state.get("month") != month:
             self.state["monthly_pnl"] = 0
+            self.state["us_monthly_pnl"] = 0
             self.state["month"] = month
 
         # 만료된 쿨다운 제거
@@ -80,15 +83,17 @@ class RiskManager:
 
     # ─── 포지션 관리 ───
 
-    def add_position(self, symbol: str, qty: int, entry_price: float, strategy: str, entry_date: str):
-        self.positions.append({
+    def add_position(self, symbol: str, qty: int, entry_price: float, strategy: str, entry_date: str, **kwargs):
+        pos = {
             "symbol": symbol,
             "qty": qty,
             "entry_price": entry_price,
             "high_price": entry_price,
             "strategy": strategy,
             "entry_date": entry_date,
-        })
+        }
+        pos.update(kwargs)
+        self.positions.append(pos)
         self.state["daily_trades"] += 1
         self._save()
 
@@ -101,6 +106,11 @@ class RiskManager:
         self.state["weekly_pnl"] += pnl
         self.state["monthly_pnl"] += pnl
         self.state["daily_trades"] += 1
+        # 미국 박스권 전략 별도 PnL 추적
+        if strategy == "us_box":
+            self.state["us_daily_pnl"] = self.state.get("us_daily_pnl", 0) + pnl
+            self.state["us_weekly_pnl"] = self.state.get("us_weekly_pnl", 0) + pnl
+            self.state["us_monthly_pnl"] = self.state.get("us_monthly_pnl", 0) + pnl
 
         # 손절이면 쿨다운 등록
         if pnl < 0:
@@ -147,6 +157,20 @@ class RiskManager:
         # ETF 포지션은 동시에 1개만
         etf_positions = [p for p in self.positions if p["strategy"] == "etf"]
         return len(etf_positions) == 0
+
+    def can_open_us_box_position(self) -> bool:
+        """미국 박스권 전략 진입 가능 여부"""
+        us_pnl = self.state.get("us_daily_pnl", 0)
+        if us_pnl <= config.US_DAILY_MAX_LOSS:
+            return False
+        us_weekly = self.state.get("us_weekly_pnl", 0)
+        if us_weekly <= config.US_WEEKLY_MAX_LOSS:
+            return False
+        us_monthly = self.state.get("us_monthly_pnl", 0)
+        if us_monthly <= config.US_MONTHLY_MAX_LOSS:
+            return False
+        us_positions = [p for p in self.positions if p["strategy"] == "us_box"]
+        return len(us_positions) < config.US_BOX_MAX_POSITIONS
 
     def is_in_cooldown(self, symbol: str) -> bool:
         today = datetime.now().strftime("%Y%m%d")

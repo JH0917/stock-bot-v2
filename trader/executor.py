@@ -49,3 +49,34 @@ class Executor:
         except Exception as e:
             logger.error(f"매도 예외 {symbol}: {e}")
             return False
+
+    # ─── 해외주식 ───
+
+    async def get_us_current_price(self, symbol: str, exchange: str = "NAS") -> float:
+        """해외주식 현재가 조회, 실패 시 0.0"""
+        try:
+            data = await self.kis.get_us_price(symbol, exchange)
+            output = data.get("output", {})
+            price = float(output.get("last", 0) or output.get("stck_prpr", 0))
+            return price
+        except Exception as e:
+            logger.error(f"[US] 현재가 조회 실패 {symbol}: {e}")
+            return 0.0
+
+    async def buy_us(self, symbol: str, qty: int, price: float,
+                      exchange: str = "NAS") -> dict:
+        """해외주식 지정가 매수"""
+        try:
+            return await self.kis.buy_us(symbol, qty, price, exchange)
+        except Exception as e:
+            logger.error(f"[US] 매수 예외 {symbol}: {e}")
+            return {"rt_cd": "-1", "msg1": str(e)}
+
+    async def sell_us(self, symbol: str, qty: int, price: float,
+                       exchange: str = "NAS") -> dict:
+        """해외주식 지정가 매도"""
+        try:
+            return await self.kis.sell_us(symbol, qty, price, exchange)
+        except Exception as e:
+            logger.error(f"[US] 매도 예외 {symbol}: {e}")
+            return {"rt_cd": "-1", "msg1": str(e)}

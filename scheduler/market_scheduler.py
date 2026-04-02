@@ -5,6 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from strategy.rsi_strategy import RSIStrategy
 from strategy.etf_momentum import ETFMomentumStrategy
+from strategy.us_box_strategy import USBoxStrategy
 from trader.risk_manager import RiskManager
 from trader.executor import Executor
 
@@ -20,6 +21,7 @@ class MarketScheduler:
         self.risk_manager = RiskManager()
         self.rsi_strategy = RSIStrategy(self.risk_manager, self.executor)
         self.etf_strategy = ETFMomentumStrategy(self.risk_manager, self.executor)
+        self.us_box_strategy = USBoxStrategy(self.risk_manager, self.executor)
         self._pending_rsi_candidates = []
 
     def start(self):
@@ -41,8 +43,18 @@ class MarketScheduler:
         self.scheduler.add_job(self._rsi_exit_check, CronTrigger(hour=15, minute=35, day_of_week=DOW), id="rsi_exit_check")
         self.scheduler.add_job(self._daily_report, CronTrigger(hour=15, minute=40, day_of_week=DOW), id="daily_report")
 
+        # ─── 미국장 (서머타임 기준, 한국시간) ───
+        # 22:00 스캔, 22:30 매수, 22:30~05:00 30분마다 모니터링, 04:50 미체결 취소
+        self.scheduler.add_job(self._us_box_scan, CronTrigger(hour=22, minute=0, day_of_week=DOW), id="us_scan")
+        self.scheduler.add_job(self._us_box_entry, CronTrigger(hour=22, minute=35, day_of_week=DOW), id="us_entry")
+        self.scheduler.add_job(self._us_box_monitor, CronTrigger(hour=22, minute="30,59", day_of_week=DOW), id="us_mon_22")
+        self.scheduler.add_job(self._us_box_monitor, CronTrigger(hour="23", minute="0,30", day_of_week=DOW), id="us_mon_23")
+        self.scheduler.add_job(self._us_box_monitor, CronTrigger(hour="0-4", minute="0,30", day_of_week="tue-sat"), id="us_mon_0_4")
+        self.scheduler.add_job(self._us_box_cancel, CronTrigger(hour=4, minute=50, day_of_week="tue-sat"), id="us_cancel")
+        self.scheduler.add_job(self._us_box_split_check, CronTrigger(hour="0,2,4", minute=0, day_of_week="tue-sat"), id="us_split")
+
         self.scheduler.start()
-        logger.info("스케줄러 시작")
+        logger.info("스케줄러 시작 (국내장 + 미국장)")
 
     async def shutdown(self):
         self.scheduler.shutdown()
@@ -91,3 +103,28 @@ class MarketScheduler:
     async def _daily_report(self):
         report = self.risk_manager.daily_report()
         logger.info(f"\n{report}")
+
+    # ─── 미국 박스권 전략 ───
+
+    async def _us_box_scan(self):
+        """22:00 — 미국 박스권 일일 스캔"""
+        logger.info("=== [US Box] 일일 스캔 시작 ===")
+        await self.us_box_strategy.daily_scan()
+
+    async def _us_box_entry(self):
+        """22:35 — 미국 박스권 매수 실행"""
+        logger.info("=== [US Box] 매수 실행 ===")
+        await self.us_box_strategy.execute_entry()
+
+    async def _us_box_monitor(self):
+        """30분마다 — 청산 조건 확인"""
+        await self.us_box_strategy.check_exit()
+
+    async def _us_box_split_check(self):
+        """3시간마다 — 분할매수 추가 진입 확인"""
+        await self.us_box_strategy.check_split_entry()
+
+    async def _us_box_cancel(self):
+        """04:50 — 미체결 주문 취소"""
+        logger.info("=== [US Box] 미체결 주문 정리 ===")
+        await self.us_box_strategy.cancel_stale_orders()
