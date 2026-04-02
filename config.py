@@ -64,7 +64,8 @@ US_BOX_SPLIT_RATIO = [0.34, 0.33, 0.33]  # 분할매수 비율
 US_MIN_MARKET_CAP = 300_000_000       # 시총 $300M+
 US_MIN_AVG_VOLUME = 100_000           # 일평균 거래량 10만주+ (백테스트 조정)
 US_MIN_PRICE = 5.0                    # 최소 주가 $5
-# 코인 관련 종목 (백테스트 최적: 코인주 집중)
+# 코인 관련주 (백테스트 최적: 채굴주+거래소 12종목, +9.1%)
+# ETF는 박스권 미형성, 레버리지 ETF는 변동성 과대로 제외
 US_PRIORITY_SYMBOLS = [
     "COIN", "MARA", "RIOT", "MSTR", "ETHE", "BITO",
     "HOOD", "BITF", "CLSK", "HUT", "CORZ", "IREN",
