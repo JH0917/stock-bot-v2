@@ -88,12 +88,16 @@ def bulk_download(symbols: list[str], days: int = 120, chunk_size: int = 100) ->
                     break
             except Exception as e:
                 logger.warning(f"yfinance bulk 시도 {attempt+1}/3 실패: {e}")
-            time.sleep(2 ** attempt)  # 1, 2, 4초 대기
+            wait = 10 * (2 ** attempt)  # 10초, 20초, 40초 대기
+            logger.info(f"yfinance 재시도 대기 {wait}초...")
+            time.sleep(wait)
 
         if df is None or df.empty:
-            # 벌크 실패 → 개별 다운로드 폴백
+            # 벌크 실패 → 개별 다운로드 폴백 (종목 사이 5초 딜레이)
             logger.warning(f"bulk 실패, 개별 다운로드 전환: {len(chunk)}종목")
-            for sym in chunk:
+            for idx, sym in enumerate(chunk):
+                if idx > 0:
+                    time.sleep(5)  # 종목 간 5초 딜레이
                 data = _download_single_with_retry(sym, days + 30)
                 if data:
                     _save_cache(sym, data)
@@ -141,7 +145,9 @@ def _download_single_with_retry(symbol: str, days: int, retries: int = 3) -> dic
         data = _download_from_yfinance(symbol, days)
         if data:
             return data
-        time.sleep(2 ** attempt)
+        wait = 10 * (2 ** attempt)  # 10초, 20초, 40초
+        logger.info(f"{symbol} 재시도 대기 {wait}초... ({attempt+1}/{retries})")
+        time.sleep(wait)
     # 캐시가 있으면 오래되었어도 사용
     cache = _load_cache(symbol)
     if cache:
