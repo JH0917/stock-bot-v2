@@ -29,20 +29,11 @@ class USBoxStrategy:
         """
         logger.info("=== [US Box] 일일 스캔 시작 ===")
 
-        # 1. 유니버스 로드 (주 1회 갱신)
-        if is_universe_stale():
-            logger.info("[US Box] 유니버스 갱신 중...")
-            symbols = await fetch_us_universe()
-            save_universe(symbols)
-        universe = load_universe()
-        if not universe:
-            logger.error("[US Box] 유니버스 비어있음")
-            return []
-
-        # 2. 기본 필터 (시총/가격 정보가 없으므로 유니버스 전체 사용)
-        # 실제 필터링은 스크리너에서 가격/거래량 기준으로 수행
-        target_symbols = [u["symbol"] for u in universe]
-        logger.info(f"[US Box] 유니버스: {len(target_symbols)}종목")
+        # 1. 코인 관련주만 스캔 (백테스트 결과: 코인주만 수익, 나머지 전부 마이너스)
+        priority = config.US_PRIORITY_SYMBOLS
+        universe = [{"symbol": s, "name": "", "exchange": "NAS", "is_etf": False} for s in priority]
+        target_symbols = priority
+        logger.info(f"[US Box] 코인 관련주 스캔: {len(target_symbols)}종목")
 
         # 3. 일봉 데이터 수집 (yfinance bulk)
         daily_data = bulk_download(target_symbols, days=config.US_BOX_LOOKBACK_DAYS + 30)
