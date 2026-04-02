@@ -1,6 +1,8 @@
 """장 스케줄러 — 장전/장중/장후 자동 워크플로우"""
 
+import asyncio
 import logging
+from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from strategy.rsi_strategy import RSIStrategy
@@ -8,6 +10,7 @@ from strategy.etf_momentum import ETFMomentumStrategy
 from strategy.us_box_strategy import USBoxStrategy
 from trader.risk_manager import RiskManager
 from trader.executor import Executor
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +47,11 @@ class MarketScheduler:
         self.scheduler.add_job(self._daily_report, CronTrigger(hour=15, minute=40, day_of_week=DOW), id="daily_report")
 
         # ─── 미국장 (서머타임 기준, 한국시간) ───
-        # 22:00 스캔, 22:30 매수, 22:30~05:00 30분마다 모니터링, 04:50 미체결 취소
+        # 22:00 스캔, 22:35 매수, 0:05/2:05 재스캔+매수, 30분마다 모니터링
         self.scheduler.add_job(self._us_box_scan, CronTrigger(hour=22, minute=0, day_of_week=DOW), id="us_scan")
         self.scheduler.add_job(self._us_box_entry, CronTrigger(hour=22, minute=35, day_of_week=DOW), id="us_entry")
+        # 장중 재스캔 (0시, 2시) — 새로운 Buy Zone 진입 기회 포착
+        self.scheduler.add_job(self._us_box_rescan, CronTrigger(hour="0,2", minute=5, day_of_week="tue-sat"), id="us_rescan")
         self.scheduler.add_job(self._us_box_monitor, CronTrigger(hour=22, minute="30,59", day_of_week=DOW), id="us_mon_22")
         self.scheduler.add_job(self._us_box_monitor, CronTrigger(hour="23", minute="0,30", day_of_week=DOW), id="us_mon_23")
         self.scheduler.add_job(self._us_box_monitor, CronTrigger(hour="0-4", minute="0,30", day_of_week="tue-sat"), id="us_mon_0_4")
@@ -55,6 +60,9 @@ class MarketScheduler:
 
         self.scheduler.start()
         logger.info("스케줄러 시작 (국내장 + 미국장)")
+
+        # 시작 시 장중이면 즉시 스캔
+        asyncio.ensure_future(self._startup_catch_up())
 
     async def shutdown(self):
         self.scheduler.shutdown()
@@ -89,6 +97,8 @@ class MarketScheduler:
 
     async def _monitor_positions(self):
         """1분마다 — 손절 체크만 (RSI 익절은 장 마감 후)"""
+        if not self.risk_manager.get_positions():
+            return  # 포지션 없으면 스킵
         await self.rsi_strategy.check_exit()
         await self.etf_strategy.check_exit()
 
@@ -117,14 +127,47 @@ class MarketScheduler:
         await self.us_box_strategy.execute_entry()
 
     async def _us_box_monitor(self):
-        """30분마다 — 청산 조건 확인"""
+        """30분마다 — 청산 조건 확인 (포지션 있을 때만)"""
+        if not self.risk_manager.get_positions(strategy="us_box"):
+            return
         await self.us_box_strategy.check_exit()
 
     async def _us_box_split_check(self):
-        """3시간마다 — 분할매수 추가 진입 확인"""
+        """3시간마다 — 분할매수 추가 진입 확인 (포지션 있을 때만)"""
+        if not self.risk_manager.get_positions(strategy="us_box"):
+            return
         await self.us_box_strategy.check_split_entry()
+
+    async def _us_box_rescan(self):
+        """0:05, 2:05 — 장중 재스캔 + 매수 (빈 슬롯 있을 때만)"""
+        us_positions = self.risk_manager.get_positions(strategy="us_box")
+        if len(us_positions) >= config.US_BOX_MAX_POSITIONS:
+            logger.info("[US Box] 재스캔 스킵 (최대 포지션 도달)")
+            return
+        logger.info("=== [US Box] 장중 재스캔 시작 ===")
+        await self.us_box_strategy.daily_scan()
+        await self.us_box_strategy.execute_entry()
 
     async def _us_box_cancel(self):
         """04:50 — 미체결 주문 취소"""
         logger.info("=== [US Box] 미체결 주문 정리 ===")
         await self.us_box_strategy.cancel_stale_orders()
+
+    async def _startup_catch_up(self):
+        """시작 시 장중이면 즉시 스캔 (재배포 대응)"""
+        await asyncio.sleep(3)  # 스케줄러 안정화 대기
+        now = datetime.now()
+        hour = now.hour
+        weekday = now.weekday()  # 0=월 ~ 6=일
+
+        # 미국장 시간: 22:00~04:50 (월~금 22시 = weekday 0~4, 화~토 0~4시 = weekday 1~5)
+        is_us_session = False
+        if weekday <= 4 and hour >= 22:
+            is_us_session = True
+        elif 1 <= weekday <= 5 and hour < 5:
+            is_us_session = True
+
+        if is_us_session and not self.us_box_strategy._candidates:
+            logger.info("=== [US Box] 시작 시 즉시 스캔 (장중 재배포 감지) ===")
+            await self.us_box_strategy.daily_scan()
+            await self.us_box_strategy.execute_entry()

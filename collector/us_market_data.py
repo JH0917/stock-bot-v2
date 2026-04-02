@@ -5,10 +5,16 @@ from __future__ import annotations
 import json
 import os
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 import yfinance as yf
 import config
+
+# Docker 환경에서 TzCache 폴더 충돌 방지
+_tz_cache_dir = os.path.join(config.DATA_DIR, "yf_cache")
+os.makedirs(_tz_cache_dir, exist_ok=True)
+yf.set_tz_cache_location(_tz_cache_dir)
 
 logger = logging.getLogger(__name__)
 
@@ -67,55 +73,81 @@ def bulk_download(symbols: list[str], days: int = 120, chunk_size: int = 100) ->
 
     failed_count = 0
 
-    # 청크별로 다운로드
+    # 청크별로 다운로드 (재시도 포함)
     for i in range(0, len(need_download), chunk_size):
         chunk = need_download[i:i + chunk_size]
         tickers = " ".join(chunk)
         period = f"{days + 30}d"
 
-        try:
-            df = yf.download(tickers, period=period, group_by="ticker",
-                             auto_adjust=True, threads=True, progress=False)
-            if df.empty:
-                failed_count += len(chunk)
-                logger.warning(f"yfinance 빈 응답: chunk {i}~{i+chunk_size}")
-                continue
+        df = None
+        for attempt in range(3):
+            try:
+                df = yf.download(tickers, period=period, group_by="ticker",
+                                 auto_adjust=True, threads=True, progress=False)
+                if df is not None and not df.empty:
+                    break
+            except Exception as e:
+                logger.warning(f"yfinance bulk 시도 {attempt+1}/3 실패: {e}")
+            time.sleep(2 ** attempt)  # 1, 2, 4초 대기
 
+        if df is None or df.empty:
+            # 벌크 실패 → 개별 다운로드 폴백
+            logger.warning(f"bulk 실패, 개별 다운로드 전환: {len(chunk)}종목")
             for sym in chunk:
-                try:
-                    if len(chunk) == 1:
-                        sym_df = df
-                    else:
-                        sym_df = df[sym] if sym in df.columns.get_level_values(0) else None
-
-                    if sym_df is None or sym_df.empty:
-                        failed_count += 1
-                        continue
-
-                    sym_df = sym_df.dropna(subset=["Close"])
-                    if len(sym_df) < 20:
-                        failed_count += 1
-                        continue
-
-                    data = {
-                        "dates": sym_df.index.strftime("%Y%m%d").tolist(),
-                        "opens": [round(float(x), 2) for x in sym_df["Open"]],
-                        "highs": [round(float(x), 2) for x in sym_df["High"]],
-                        "lows": [round(float(x), 2) for x in sym_df["Low"]],
-                        "closes": [round(float(x), 2) for x in sym_df["Close"]],
-                        "volumes": [int(x) for x in sym_df["Volume"]],
-                    }
+                data = _download_single_with_retry(sym, days + 30)
+                if data:
                     _save_cache(sym, data)
                     result[sym] = _trim_data(data, days)
-                except Exception as e:
-                    logger.debug(f"{sym} 파싱 실패: {e}")
+                else:
+                    failed_count += 1
+            continue
 
-        except Exception as e:
-            failed_count += len(chunk)
-            logger.error(f"yfinance 다운로드 실패 (chunk {i}~{i+chunk_size}): {e}")
+        for sym in chunk:
+            try:
+                if len(chunk) == 1:
+                    sym_df = df
+                else:
+                    sym_df = df[sym] if sym in df.columns.get_level_values(0) else None
+
+                if sym_df is None or sym_df.empty:
+                    failed_count += 1
+                    continue
+
+                sym_df = sym_df.dropna(subset=["Close"])
+                if len(sym_df) < 20:
+                    failed_count += 1
+                    continue
+
+                data = {
+                    "dates": sym_df.index.strftime("%Y%m%d").tolist(),
+                    "opens": [round(float(x), 2) for x in sym_df["Open"]],
+                    "highs": [round(float(x), 2) for x in sym_df["High"]],
+                    "lows": [round(float(x), 2) for x in sym_df["Low"]],
+                    "closes": [round(float(x), 2) for x in sym_df["Close"]],
+                    "volumes": [int(x) for x in sym_df["Volume"]],
+                }
+                _save_cache(sym, data)
+                result[sym] = _trim_data(data, days)
+            except Exception as e:
+                logger.debug(f"{sym} 파싱 실패: {e}")
 
     logger.info(f"총 {len(result)}개 종목 데이터 확보 (실패: {failed_count}개)")
     return result
+
+
+def _download_single_with_retry(symbol: str, days: int, retries: int = 3) -> dict:
+    """개별 종목 재시도 다운로드 (rate limit 대응)"""
+    for attempt in range(retries):
+        data = _download_from_yfinance(symbol, days)
+        if data:
+            return data
+        time.sleep(2 ** attempt)
+    # 캐시가 있으면 오래되었어도 사용
+    cache = _load_cache(symbol)
+    if cache:
+        logger.info(f"{symbol} 오래된 캐시 사용 (다운로드 {retries}회 실패)")
+        return cache["data"]
+    return {}
 
 
 def _download_from_yfinance(symbol: str, days: int) -> dict:
