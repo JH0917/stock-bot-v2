@@ -13,18 +13,13 @@ TOTAL_CAPITAL = 1_000_000  # 총 자본 100만원
 MAIN_CAPITAL = 700_000     # 주전략 70만원
 SUB_CAPITAL = 300_000      # 보조전략 30만원
 
-# ─── 주전략: RSI(2) + Holy Grail ───
-RSI_PERIOD = 2
-RSI_ENTRY_THRESHOLD = 5       # RSI(2) < 5 진입
-RSI_EXIT_THRESHOLD = 70       # RSI(2) > 70 청산
-ADX_PERIOD = 14
-ADX_MIN = 30                  # ADX > 30 추세 필터
-MA_LONG = 200                 # 200일 이동평균
-MAIN_STOP_LOSS_PCT = -3.0     # 고정 손절 -3%
-MAIN_TRAILING_STOP_PCT = -2.5 # 추적 손절 -2.5%
-MAIN_MAX_HOLD_DAYS = 5        # 최대 보유 5거래일
-MAIN_MAX_POSITIONS = 2        # 동시 보유 최대 2종목
-MAIN_COOLDOWN_DAYS = 3        # 손절 후 동일 종목 재진입 금지 기간
+# ─── 주전략: 상대강도 로테이션 ───
+# 워크포워드 검증: 평균 +40.6%/3개월, 양수구간 85%, PF 1.79
+RS_LOOKBACK = 10              # 수익률 계산 기간 (거래일)
+RS_TOP_N = 3                  # 상위 N종목 보유
+RS_REBAL_DAYS = 5             # 리밸런싱 주기 (거래일)
+RS_STOP_LOSS_PCT = -5.0       # 개별 종목 손절
+MAIN_MAX_POSITIONS = 3        # 동시 보유 최대 3종목
 
 # ─── 보조전략: ETF Intraday Momentum ───
 ETF_SYMBOLS = ["069500", "229200"]  # KODEX 200, KODEX 코스닥150
