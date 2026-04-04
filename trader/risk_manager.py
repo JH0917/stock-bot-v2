@@ -132,7 +132,7 @@ class RiskManager:
         return self.positions
 
     def main_position_count(self) -> int:
-        return len([p for p in self.positions if p["strategy"] == "rsi"])
+        return len([p for p in self.positions if p["strategy"] == "ema"])
 
     # ─── 리스크 체크 ───
 

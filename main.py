@@ -1,4 +1,4 @@
-"""Stock Bot v2 — 상대강도 로테이션 + ETF Momentum 자동매매 봇"""
+"""Stock Bot v2 — EMA 크로스 + ETF Momentum + US Box 자동매매 봇"""
 
 import logging
 from contextlib import asynccontextmanager

@@ -82,6 +82,259 @@ def precompute(all_data):
 
 
 # ═══════════════════════════════════════════════════════════
+# 전략 0: RSI(2) + Holy Grail 최적화 (config 반영)
+# ADX>20, RSI(2)<5 진입, RSI(2)>80 익절, 손절-4%, 추적-2.5%, 보유10일
+# ═══════════════════════════════════════════════════════════
+def strategy_rsi2_holy_grail(cache, all_dates, rsi_entry=5, rsi_exit=80,
+                              adx_min=20, stop=-4.0, trailing=-2.5, max_hold=10):
+    dates = [d for d in all_dates if START <= d <= END]
+    capital = KR_CAPITAL
+    positions = []
+    trades_pnl = []
+    equity = []
+
+    for date in dates:
+        for pos in list(positions):
+            c = cache[pos["s"]]
+            if date not in c["di"]: continue
+            idx = c["di"][date]
+            price = c["closes"][idx]
+            pnl_pct = (price - pos["ep"]) / pos["ep"] * 100
+            hold = idx - pos["ei"]
+            # 고점 갱신
+            pos["hp"] = max(pos.get("hp", pos["ep"]), price)
+            trail_pct = (price - pos["hp"]) / pos["hp"] * 100
+
+            reason = None
+            if pnl_pct <= stop:
+                reason = 1  # 고정 손절
+            elif trail_pct <= trailing and pos["hp"] > pos["ep"]:
+                reason = 1  # 추적 손절
+            elif c["rsi2"][idx] >= rsi_exit:
+                reason = 1  # RSI 익절
+            elif hold >= max_hold:
+                reason = 1  # 최대 보유일
+
+            if reason:
+                cost = pos["ep"] * pos["q"]
+                rev = price * pos["q"]
+                comm = (cost + rev) * KR_COMMISSION / 100
+                capital += cost + (rev - cost - comm)
+                trades_pnl.append(rev - cost - comm)
+                positions = [p for p in positions if p["s"] != pos["s"]]
+
+        if len(positions) < 2:  # 최대 2종목
+            candidates = []
+            for sym, c in cache.items():
+                if date not in c["di"] or any(p["s"] == sym for p in positions): continue
+                idx = c["di"][date]
+                if idx < 200: continue
+                closes = c["closes"]
+                if closes[idx] < 5000: continue
+                # 200MA 위
+                if c["sma200"][idx] <= 0 or closes[idx] <= c["sma200"][idx]: continue
+                # ADX > adx_min
+                if c["adx14"][idx] < adx_min: continue
+                # RSI(2) < rsi_entry
+                if c["rsi2"][idx] < rsi_entry:
+                    candidates.append((sym, c["rsi2"][idx]))
+            candidates.sort(key=lambda x: x[1])  # RSI 가장 낮은 순
+            for sym, _ in candidates[:2 - len(positions)]:
+                c = cache[sym]
+                idx = c["di"][date]
+                budget = capital // 2
+                qty = int(budget / c["closes"][idx])
+                if qty <= 0: continue
+                capital -= c["closes"][idx] * qty
+                positions.append({"s": sym, "q": qty, "ep": c["closes"][idx], "ei": idx, "hp": c["closes"][idx]})
+
+        eq = capital + sum(
+            cache[p["s"]]["closes"][cache[p["s"]]["di"][date]] * p["q"]
+            if date in cache[p["s"]]["di"] else p["ep"] * p["q"]
+            for p in positions)
+        equity.append(eq)
+
+    return calc_result(trades_pnl, equity, KR_CAPITAL)
+
+
+# ═══════════════════════════════════════════════════════════
+# 전략 0b: RSI2+HG N종목 버전
+# ═══════════════════════════════════════════════════════════
+def strategy_rsi2_holy_grail_n(cache, all_dates, rsi_entry=5, rsi_exit=80,
+                                adx_min=20, stop=-4.0, trailing=-2.5, max_hold=10, max_pos=3):
+    dates = [d for d in all_dates if START <= d <= END]
+    capital = KR_CAPITAL
+    positions = []
+    trades_pnl = []
+    equity = []
+    for date in dates:
+        for pos in list(positions):
+            c = cache[pos["s"]]
+            if date not in c["di"]: continue
+            idx = c["di"][date]
+            price = c["closes"][idx]
+            pnl_pct = (price - pos["ep"]) / pos["ep"] * 100
+            hold = idx - pos["ei"]
+            pos["hp"] = max(pos.get("hp", pos["ep"]), price)
+            trail_pct = (price - pos["hp"]) / pos["hp"] * 100
+            reason = None
+            if pnl_pct <= stop: reason = 1
+            elif trail_pct <= trailing and pos["hp"] > pos["ep"]: reason = 1
+            elif c["rsi2"][idx] >= rsi_exit: reason = 1
+            elif hold >= max_hold: reason = 1
+            if reason:
+                cost = pos["ep"] * pos["q"]
+                rev = price * pos["q"]
+                comm = (cost + rev) * KR_COMMISSION / 100
+                capital += cost + (rev - cost - comm)
+                trades_pnl.append(rev - cost - comm)
+                positions = [p for p in positions if p["s"] != pos["s"]]
+        if len(positions) < max_pos:
+            candidates = []
+            for sym, c in cache.items():
+                if date not in c["di"] or any(p["s"] == sym for p in positions): continue
+                idx = c["di"][date]
+                if idx < 200 or c["closes"][idx] < 5000: continue
+                if c["sma200"][idx] <= 0 or c["closes"][idx] <= c["sma200"][idx]: continue
+                if c["adx14"][idx] < adx_min: continue
+                if c["rsi2"][idx] < rsi_entry:
+                    candidates.append((sym, c["rsi2"][idx]))
+            candidates.sort(key=lambda x: x[1])
+            for sym, _ in candidates[:max_pos - len(positions)]:
+                c = cache[sym]
+                idx = c["di"][date]
+                budget = capital // max_pos
+                qty = int(budget / c["closes"][idx])
+                if qty <= 0: continue
+                capital -= c["closes"][idx] * qty
+                positions.append({"s": sym, "q": qty, "ep": c["closes"][idx], "ei": idx, "hp": c["closes"][idx]})
+        eq = capital + sum(
+            cache[p["s"]]["closes"][cache[p["s"]]["di"][date]] * p["q"]
+            if date in cache[p["s"]]["di"] else p["ep"] * p["q"]
+            for p in positions)
+        equity.append(eq)
+    return calc_result(trades_pnl, equity, KR_CAPITAL)
+
+
+# ═══════════════════════════════════════════════════════════
+# 전략 0c: EMA 크로스 + RSI + 추적손절 옵션
+# ═══════════════════════════════════════════════════════════
+def strategy_ema_cross(cache, all_dates, es="ema13", el="ema21", rsi_thresh=60,
+                       stop=-5.0, target=5.0, trailing=None, max_hold=10):
+    dates = [d for d in all_dates if START <= d <= END]
+    capital = KR_CAPITAL
+    positions = []
+    trades_pnl = []
+    equity = []
+    for date in dates:
+        for pos in list(positions):
+            c = cache[pos["s"]]
+            if date not in c["di"]: continue
+            idx = c["di"][date]
+            price = c["closes"][idx]
+            pnl_pct = (price - pos["ep"]) / pos["ep"] * 100
+            hold = idx - pos["ei"]
+            pos["hp"] = max(pos.get("hp", pos["ep"]), price)
+            trail_pct = (price - pos["hp"]) / pos["hp"] * 100
+            es_v = c[es]; el_v = c[el]
+            cross_down = idx > 0 and es_v[idx] < el_v[idx] and es_v[idx-1] >= el_v[idx-1]
+            reason = None
+            if pnl_pct <= stop: reason = 1
+            elif pnl_pct >= target: reason = 1
+            elif trailing and trail_pct <= trailing and pos["hp"] > pos["ep"]: reason = 1
+            elif hold >= max_hold: reason = 1
+            elif cross_down: reason = 1
+            if reason:
+                cost = pos["ep"] * pos["q"]
+                rev = price * pos["q"]
+                comm = (cost + rev) * KR_COMMISSION / 100
+                capital += cost + (rev - cost - comm)
+                trades_pnl.append(rev - cost - comm)
+                positions = [p for p in positions if p["s"] != pos["s"]]
+        if len(positions) < 3:
+            candidates = []
+            for sym, c in cache.items():
+                if date not in c["di"] or any(p["s"] == sym for p in positions): continue
+                idx = c["di"][date]
+                if idx < 60 or c["closes"][idx] < 5000: continue
+                es_v = c[es]; el_v = c[el]
+                if idx < 1 or not (es_v[idx] > el_v[idx] and es_v[idx-1] <= el_v[idx-1]): continue
+                if c["rsi14"][idx] < rsi_thresh: continue
+                candidates.append((sym, c["rsi14"][idx], idx))
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            for sym, _, idx in candidates[:3 - len(positions)]:
+                c = cache[sym]
+                budget = capital // 3
+                qty = int(budget / c["closes"][idx])
+                if qty <= 0: continue
+                capital -= c["closes"][idx] * qty
+                positions.append({"s": sym, "q": qty, "ep": c["closes"][idx], "ei": idx, "hp": c["closes"][idx]})
+        eq = capital + sum(
+            cache[p["s"]]["closes"][cache[p["s"]]["di"][date]] * p["q"]
+            if date in cache[p["s"]]["di"] else p["ep"] * p["q"]
+            for p in positions)
+        equity.append(eq)
+    return calc_result(trades_pnl, equity, KR_CAPITAL)
+
+
+# ═══════════════════════════════════════════════════════════
+# 전략 0d: ADX + ATR 기반 추세추종 + 추적손절 옵션
+# ═══════════════════════════════════════════════════════════
+def strategy_adx_atr(cache, all_dates, adx_thresh=30, atr_sl=2.5, atr_tp=4.0,
+                     trailing=None, max_hold=15):
+    dates = [d for d in all_dates if START <= d <= END]
+    capital = KR_CAPITAL
+    positions = []
+    trades_pnl = []
+    equity = []
+    for date in dates:
+        for pos in list(positions):
+            c = cache[pos["s"]]
+            if date not in c["di"]: continue
+            idx = c["di"][date]
+            price = c["closes"][idx]
+            pnl_pct = (price - pos["ep"]) / pos["ep"] * 100
+            hold = idx - pos["ei"]
+            a = c["atr14"][idx]
+            sl_pct = -(atr_sl * a / pos["ep"] * 100) if a > 0 else -5.0
+            tp_pct = (atr_tp * a / pos["ep"] * 100) if a > 0 else 10.0
+            pos["hp"] = max(pos.get("hp", pos["ep"]), price)
+            trail_pct = (price - pos["hp"]) / pos["hp"] * 100
+            reason = None
+            if pnl_pct <= sl_pct: reason = 1
+            elif pnl_pct >= tp_pct: reason = 1
+            elif trailing and trail_pct <= trailing and pos["hp"] > pos["ep"]: reason = 1
+            elif hold >= max_hold: reason = 1
+            if reason:
+                cost = pos["ep"] * pos["q"]
+                rev = price * pos["q"]
+                comm = (cost + rev) * KR_COMMISSION / 100
+                capital += cost + (rev - cost - comm)
+                trades_pnl.append(rev - cost - comm)
+                positions = [p for p in positions if p["s"] != pos["s"]]
+        if len(positions) < 3:
+            for sym, c in cache.items():
+                if len(positions) >= 3: break
+                if date not in c["di"] or any(p["s"] == sym for p in positions): continue
+                idx = c["di"][date]
+                if idx < 60 or c["closes"][idx] < 5000: continue
+                if c["adx14"][idx] < adx_thresh: continue
+                # +DI > -DI 체크 (상승 추세만) — ema 짧은 > 긴
+                if c["ema13"][idx] <= c["ema21"][idx]: continue
+                budget = capital // 3
+                qty = int(budget / c["closes"][idx])
+                if qty <= 0: continue
+                capital -= c["closes"][idx] * qty
+                positions.append({"s": sym, "q": qty, "ep": c["closes"][idx], "ei": idx, "hp": c["closes"][idx]})
+        eq = capital + sum(
+            cache[p["s"]]["closes"][cache[p["s"]]["di"][date]] * p["q"]
+            if date in cache[p["s"]]["di"] else p["ep"] * p["q"]
+            for p in positions)
+        equity.append(eq)
+    return calc_result(trades_pnl, equity, KR_CAPITAL)
+
+
+# ═══════════════════════════════════════════════════════════
 # 전략 1: RSI(2) Connors — 극단적 과매도 평균회귀
 # ═══════════════════════════════════════════════════════════
 def strategy_rsi2(cache, all_dates, rsi_entry=10, rsi_exit=70, ma_key="sma200", stop=-5.0):
@@ -506,22 +759,31 @@ def strategy_rel_strength(cache, all_dates, lookback=10, top_n=3, rebal_days=5, 
 
 # ═══════════════════════════════════════════════════════════
 def get_strategies():
-    """상위 전략만 선별해서 워크포워드 테스트"""
+    """전 전략 파라미터 튜닝 비교"""
     return [
-        # 상대강도 계열
-        ("상대강도(3d,T5,R2)", strategy_rel_strength, {"lookback": 3, "top_n": 5, "rebal_days": 2}),
-        ("상대강도(3d,T3,R2)", strategy_rel_strength, {"lookback": 3, "top_n": 3, "rebal_days": 2}),
-        ("상대강도(5d,T5,R3)", strategy_rel_strength, {"lookback": 5, "top_n": 5, "rebal_days": 3}),
+        # ══ RSI2+HG 파라미터 스윕 ══
+        ("RSI2+HG(현재config)", strategy_rsi2_holy_grail, {"rsi_entry": 5, "rsi_exit": 80, "adx_min": 20, "stop": -4.0, "trailing": -2.5, "max_hold": 10}),
+        ("RSI2+HG(exit90)", strategy_rsi2_holy_grail, {"rsi_entry": 5, "rsi_exit": 90, "adx_min": 20, "stop": -4.0, "trailing": -2.5, "max_hold": 10}),
+        ("RSI2+HG(adx15)", strategy_rsi2_holy_grail, {"rsi_entry": 5, "rsi_exit": 80, "adx_min": 15, "stop": -4.0, "trailing": -2.5, "max_hold": 10}),
+        ("RSI2+HG(entry10)", strategy_rsi2_holy_grail, {"rsi_entry": 10, "rsi_exit": 80, "adx_min": 20, "stop": -4.0, "trailing": -2.5, "max_hold": 10}),
+        ("RSI2+HG(sl-5,hold15)", strategy_rsi2_holy_grail, {"rsi_entry": 5, "rsi_exit": 80, "adx_min": 20, "stop": -5.0, "trailing": -3.0, "max_hold": 15}),
+        ("RSI2+HG(sl-3,trail-2)", strategy_rsi2_holy_grail, {"rsi_entry": 5, "rsi_exit": 80, "adx_min": 20, "stop": -3.0, "trailing": -2.0, "max_hold": 10}),
+        ("RSI2+HG(3종목)", strategy_rsi2_holy_grail_n, {"rsi_entry": 5, "rsi_exit": 80, "adx_min": 20, "stop": -4.0, "trailing": -2.5, "max_hold": 10, "max_pos": 3}),
+        ("RSI2+HG(entry10,exit90)", strategy_rsi2_holy_grail, {"rsi_entry": 10, "rsi_exit": 90, "adx_min": 20, "stop": -4.0, "trailing": -2.5, "max_hold": 10}),
+        # ══ EMA 크로스 파라미터 스윕 (원래 1위 +63.2%) ══
+        ("EMA(13/21)+RSI>60", strategy_ema_cross, {"es": "ema13", "el": "ema21", "rsi_thresh": 60, "stop": -5.0, "target": 5.0, "trailing": None}),
+        ("EMA(13/21)+RSI>60+trail", strategy_ema_cross, {"es": "ema13", "el": "ema21", "rsi_thresh": 60, "stop": -5.0, "target": 8.0, "trailing": -2.5}),
+        ("EMA(13/21)+RSI>50+trail", strategy_ema_cross, {"es": "ema13", "el": "ema21", "rsi_thresh": 50, "stop": -4.0, "target": 8.0, "trailing": -2.5}),
+        ("EMA(9/21)+RSI>50+trail", strategy_ema_cross, {"es": "ema9", "el": "ema21", "rsi_thresh": 50, "stop": -4.0, "target": 8.0, "trailing": -2.5}),
+        ("EMA(13/34)+RSI>50+trail", strategy_ema_cross, {"es": "ema13", "el": "ema34", "rsi_thresh": 50, "stop": -4.0, "target": 10.0, "trailing": -3.0}),
+        # ══ ADX+ATR 파라미터 스윕 (원래 2위 +56.4%) ══
+        ("ADX(30)+2.5/4.0ATR", strategy_adx_atr, {"adx_thresh": 30, "atr_sl": 2.5, "atr_tp": 4.0, "trailing": None}),
+        ("ADX(25)+2.0/4.0ATR+trail", strategy_adx_atr, {"adx_thresh": 25, "atr_sl": 2.0, "atr_tp": 4.0, "trailing": -2.5}),
+        ("ADX(20)+2.0/5.0ATR+trail", strategy_adx_atr, {"adx_thresh": 20, "atr_sl": 2.0, "atr_tp": 5.0, "trailing": -3.0}),
+        ("ADX(30)+2.0/5.0ATR+trail", strategy_adx_atr, {"adx_thresh": 30, "atr_sl": 2.0, "atr_tp": 5.0, "trailing": -2.5}),
+        ("ADX(25)+1.5/3.0ATR", strategy_adx_atr, {"adx_thresh": 25, "atr_sl": 1.5, "atr_tp": 3.0, "trailing": None}),
+        # ══ 기준선: 상대강도 ══
         ("상대강도(10d,T3,R5)", strategy_rel_strength, {"lookback": 10, "top_n": 3, "rebal_days": 5}),
-        # 듀얼 모멘텀 계열
-        ("듀얼모멘텀(3d,T3,R2)", strategy_dual_momentum, {"lookback": 3, "top_n": 3, "rebal_days": 2}),
-        ("듀얼모멘텀(5d,T5,R2)", strategy_dual_momentum, {"lookback": 5, "top_n": 5, "rebal_days": 2}),
-        ("듀얼모멘텀(20d,T5,R5)", strategy_dual_momentum, {"lookback": 20, "top_n": 5, "rebal_days": 5}),
-        # 콤보/스퀴즈/도치안 (안정적 전략)
-        ("콤보(ADX20,9/21,R35-75)", strategy_combo, {"adx_thresh": 20, "es_key": "ema9", "el_key": "ema21", "rsi_low": 35, "rsi_high": 75, "atr_sl": 1.5, "atr_tp": 3.0}),
-        ("스퀴즈(BB2.0,KC1.5)", strategy_squeeze, {"bb_u_key": "bb_u", "bb_l_key": "bb_l", "bb_m_key": "bb_m", "kc_mult": 1.5}),
-        ("도치안(20/10)", strategy_donchian, {"entry_period": 20, "exit_period": 10}),
-        ("RSI2(5/80,MA200)", strategy_rsi2, {"rsi_entry": 5, "rsi_exit": 80, "ma_key": "sma200"}),
     ]
 
 
@@ -639,6 +901,26 @@ def main():
               f"{s['최대']:>+7.1f} {s['양수구간%']:>5.0f}% {s['평균PF']:>6.2f} {s['평균MDD']:>7.1f}{stable}")
     print(f"{'='*100}")
     print(f"  ✓ = 양수구간 70%이상 & 평균PF 1.2이상 → 실전 후보")
+
+    # ── 전체 기간 실행 (거래횟수, 총손익 확인) ──
+    START = "20250201"
+    END = "20260331"
+    print(f"\n{'='*110}")
+    print(f"  전체 기간 실적 ({START}~{END}, 14개월)  |  자본금 {KR_CAPITAL:,}원")
+    print(f"{'='*110}")
+    print(f"{'#':>3} {'전략':>30} {'거래':>5} {'승률%':>6} {'수익률%':>8} {'총손익':>12} {'MDD%':>7} {'PF':>6}  {'월평균손익':>10}")
+    print(f"{'-'*110}")
+    full_results = []
+    for name, func, params in strategies:
+        r = func(cache, kr_dates, **params)
+        r["전략"] = name
+        r["월평균"] = int(r["총손익"] / 14)
+        full_results.append(r)
+    full_results.sort(key=lambda x: x["수익률"], reverse=True)
+    for i, r in enumerate(full_results):
+        print(f"{i+1:>3} {r['전략']:>30} {r['거래']:>5} {r['승률']:>6.1f} {r['수익률']:>+8.1f} "
+              f"{r['총손익']:>+12,} {r['MDD']:>7.1f} {r['PF']:>6.2f}  {r['월평균']:>+10,}원/월")
+    print(f"{'='*110}")
     print()
 
 

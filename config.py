@@ -13,13 +13,30 @@ TOTAL_CAPITAL = 1_000_000  # 총 자본 100만원
 MAIN_CAPITAL = 700_000     # 주전략 70만원
 SUB_CAPITAL = 300_000      # 보조전략 30만원
 
-# ─── 주전략: 상대강도 로테이션 ───
-# 워크포워드 검증: 평균 +40.6%/3개월, 양수구간 85%, PF 1.79
+# ─── 주전략: EMA(13/21) 크로스 + RSI(14)>50 트렌드 추종 ───
+# 워크포워드 검증: +207%, PF=1.98, MDD=-9.1%, 100% 양수 윈도우 (14개월)
+EMA_SHORT = 13                # 단기 EMA
+EMA_LONG = 21                 # 장기 EMA
+RSI_PERIOD = 14               # RSI 기간
+RSI_ENTRY_THRESHOLD = 50      # RSI(14) > 50 진입 필터
+MAIN_STOP_LOSS_PCT = -4.0     # 고정 손절
+MAIN_TRAILING_STOP_PCT = -2.5 # 추적 손절 (최고점 대비)
+MAIN_TARGET_PROFIT_PCT = 8.0  # 익절 목표 +8%
+MAIN_MAX_HOLD_DAYS = 10       # 최대 보유일
+MAIN_MAX_POSITIONS = 3        # 동시 보유 최대 3종목
+MAIN_COOLDOWN_DAYS = 3        # 손절 후 재진입 대기일
+
+# ─── 공용 지표 (US Box, 스크리닝 등에서 사용) ───
+ADX_PERIOD = 14               # ADX 기간
+ADX_MIN = 20                  # ADX 최소값
+MA_LONG = 200                 # 장기 이동평균
+RSI_EXIT_THRESHOLD = 70       # RSI 익절 기준 (레거시 참조용)
+
+# ─── 보조전략: 상대강도 로테이션 ───
 RS_LOOKBACK = 10              # 수익률 계산 기간 (거래일)
 RS_TOP_N = 3                  # 상위 N종목 보유
 RS_REBAL_DAYS = 5             # 리밸런싱 주기 (거래일)
 RS_STOP_LOSS_PCT = -5.0       # 개별 종목 손절
-MAIN_MAX_POSITIONS = 3        # 동시 보유 최대 3종목
 
 # ─── 보조전략: ETF Intraday Momentum ───
 ETF_SYMBOLS = ["069500", "229200"]  # KODEX 200, KODEX 코스닥150

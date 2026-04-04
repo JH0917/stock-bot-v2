@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from strategy.relative_strength import RelativeStrengthStrategy
+from strategy.ema_strategy import EMAStrategy
 from strategy.etf_momentum import ETFMomentumStrategy
 from strategy.us_box_strategy import USBoxStrategy
 from trader.risk_manager import RiskManager
@@ -22,13 +22,15 @@ class MarketScheduler:
         self.scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
         self.executor = Executor()
         self.risk_manager = RiskManager()
-        self.rs_strategy = RelativeStrengthStrategy(self.risk_manager, self.executor)
+        self.ema_strategy = EMAStrategy(self.risk_manager, self.executor)
         self.etf_strategy = ETFMomentumStrategy(self.risk_manager, self.executor)
         self.us_box_strategy = USBoxStrategy(self.risk_manager, self.executor)
 
     def start(self):
-        # ─── 장 시작: 상대강도 리밸런싱 (09:05) ───
-        self.scheduler.add_job(self._rs_rebalance, CronTrigger(hour=9, minute=5, day_of_week=DOW), id="rs_rebalance")
+        # ─── 주전략: EMA 크로스 진입 (09:05) + 데드크로스 매도 실행 ───
+        self.scheduler.add_job(self._ema_entry, CronTrigger(hour=9, minute=5, day_of_week=DOW), id="ema_entry")
+        # ─── 장 마감 후 데드크로스 체크 (15:35) ───
+        self.scheduler.add_job(self._ema_dead_cross_check, CronTrigger(hour=15, minute=35, day_of_week=DOW), id="ema_dead_cross")
 
         # ─── ETF ───
         self.scheduler.add_job(self._etf_capture_open, CronTrigger(hour=9, minute=0, day_of_week=DOW), id="etf_open")
@@ -67,10 +69,20 @@ class MarketScheduler:
 
     # ─── 작업 정의 ───
 
-    async def _rs_rebalance(self):
-        """09:05 — 상대강도 리밸런싱 (5거래일마다)"""
-        logger.info("=== [RS] 상대강도 리밸런싱 체크 ===")
-        await self.rs_strategy.rebalance()
+    async def _ema_entry(self):
+        """09:05 — EMA 크로스 스캔 + 매수 실행 + 데드크로스 매도"""
+        logger.info("=== [EMA] 매수/매도 실행 ===")
+        # 데드크로스 매도 먼저
+        await self.ema_strategy.execute_dead_cross_exit()
+        # 신규 매수
+        candidates = await self.ema_strategy.scan_entry()
+        if candidates:
+            await self.ema_strategy.execute_entry(candidates)
+
+    async def _ema_dead_cross_check(self):
+        """15:35 — 데드크로스 체크 (다음날 매도 예정)"""
+        logger.info("=== [EMA] 데드크로스 체크 ===")
+        await self.ema_strategy.check_dead_cross_exit()
 
     async def _etf_capture_open(self):
         await self.etf_strategy.capture_open()
@@ -80,10 +92,10 @@ class MarketScheduler:
         await self.etf_strategy.check_entry()
 
     async def _monitor_positions(self):
-        """1분마다 — 손절 체크"""
+        """1분마다 — 손절/익절 체크"""
         if not self.risk_manager.get_positions():
             return
-        await self.rs_strategy.check_exit()
+        await self.ema_strategy.check_exit()
         await self.etf_strategy.check_exit()
 
     async def _etf_close_all(self):
