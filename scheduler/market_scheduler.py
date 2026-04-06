@@ -29,6 +29,8 @@ class MarketScheduler:
     def start(self):
         # ─── 주전략: EMA 크로스 진입 (09:05) + 데드크로스 매도 실행 ───
         self.scheduler.add_job(self._ema_entry, CronTrigger(hour=9, minute=5, day_of_week=DOW), id="ema_entry")
+        # ─── 장중 재스캔 (10, 11, 13, 14시) — 빈 슬롯 있을 때만 ───
+        self.scheduler.add_job(self._ema_rescan, CronTrigger(hour="10,11,13,14", minute=5, day_of_week=DOW), id="ema_rescan")
         # ─── 장 마감 후 데드크로스 체크 (15:35) ───
         self.scheduler.add_job(self._ema_dead_cross_check, CronTrigger(hour=15, minute=35, day_of_week=DOW), id="ema_dead_cross")
 
@@ -75,6 +77,17 @@ class MarketScheduler:
         # 데드크로스 매도 먼저
         await self.ema_strategy.execute_dead_cross_exit()
         # 신규 매수
+        candidates = await self.ema_strategy.scan_entry()
+        if candidates:
+            await self.ema_strategy.execute_entry(candidates)
+
+    async def _ema_rescan(self):
+        """10:05, 11:05, 13:05, 14:05 — 장중 재스캔 (빈 슬롯 있을 때만)"""
+        ema_count = self.risk_manager.main_position_count()
+        if ema_count >= config.MAIN_MAX_POSITIONS:
+            logger.info(f"[EMA] 재스캔 스킵 (보유 {ema_count}/{config.MAIN_MAX_POSITIONS})")
+            return
+        logger.info(f"=== [EMA] 장중 재스캔 ({ema_count}/{config.MAIN_MAX_POSITIONS}) ===")
         candidates = await self.ema_strategy.scan_entry()
         if candidates:
             await self.ema_strategy.execute_entry(candidates)

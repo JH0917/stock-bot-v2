@@ -93,7 +93,7 @@ def screen_ema_candidates() -> list[dict]:
 
     필터:
     1. KOSPI200 + KOSDAQ150 종목
-    2. EMA(13) > EMA(21) 골든크로스 (전일 EMA13 <= EMA21, 오늘 EMA13 > EMA21)
+    2. EMA(13) > EMA(21) 골든크로스 (최근 3일 이내 크로스)
     3. RSI(14) > 50
     4. 최소 거래대금, 최소 주가
     """
@@ -101,10 +101,13 @@ def screen_ema_candidates() -> list[dict]:
     logger.info(f"[EMA] 스크리닝 대상: {len(symbols)}종목")
 
     candidates = []
+    stats = {"data_insufficient": 0, "low_trade_value": 0, "low_price": 0,
+             "no_golden_cross": 0, "low_rsi": 0, "passed": 0}
 
     for sym in symbols:
         data = get_daily_ohlcv(sym, days=50)
         if not data or len(data["closes"]) < config.EMA_LONG + 2:
+            stats["data_insufficient"] += 1
             continue
 
         closes = data["closes"]
@@ -112,27 +115,42 @@ def screen_ema_candidates() -> list[dict]:
 
         # 필터 0: 최소 거래대금
         if get_trade_value(sym) < config.MIN_TRADE_VALUE:
+            stats["low_trade_value"] += 1
             continue
 
         # 필터 1: 최소 주가
         if last_close < config.MIN_PRICE:
+            stats["low_price"] += 1
             continue
 
-        # 필터 2: EMA 골든크로스 (오늘 크로스 또는 크로스 직후 유지)
+        # 필터 2: EMA 골든크로스 (최근 3일 이내 크로스 발생)
         ema_short = ema(closes, config.EMA_SHORT)
         ema_long = ema(closes, config.EMA_LONG)
 
-        # 오늘 EMA13 > EMA21이고, 전일 EMA13 <= EMA21 (크로스 발생)
+        # 현재 EMA13 > EMA21이어야 함
         if ema_short[-1] <= ema_long[-1]:
+            stats["no_golden_cross"] += 1
             continue
-        if ema_short[-2] > ema_long[-2]:
-            continue  # 전일에 이미 크로스된 상태면 스킵 (신규 크로스만)
+
+        # 최근 3일 이내에 크로스가 발생했는지 확인
+        cross_found = False
+        for lookback in range(1, 4):  # [-2], [-3], [-4] 체크
+            idx = -(lookback + 1)
+            if len(ema_short) >= abs(idx) and ema_short[idx] <= ema_long[idx]:
+                cross_found = True
+                break
+
+        if not cross_found:
+            stats["no_golden_cross"] += 1
+            continue
 
         # 필터 3: RSI(14) > 50
         rsi_values = rsi(closes, config.RSI_PERIOD)
         if rsi_values[-1] <= config.RSI_ENTRY_THRESHOLD:
+            stats["low_rsi"] += 1
             continue
 
+        stats["passed"] += 1
         candidates.append({
             "symbol": sym,
             "close": last_close,
@@ -140,6 +158,12 @@ def screen_ema_candidates() -> list[dict]:
             "ema_long": round(ema_long[-1], 2),
             "rsi": round(rsi_values[-1], 2),
         })
+
+    # 필터링 통계 로그
+    logger.info(f"[EMA] 필터 통계: 데이터부족={stats['data_insufficient']}, "
+                f"거래대금미달={stats['low_trade_value']}, 저가={stats['low_price']}, "
+                f"크로스없음={stats['no_golden_cross']}, RSI미달={stats['low_rsi']}, "
+                f"통과={stats['passed']}")
 
     # RSI가 높은 순 (모멘텀 강한 종목 우선)
     candidates.sort(key=lambda x: x["rsi"], reverse=True)
