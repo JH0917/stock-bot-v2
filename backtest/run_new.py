@@ -278,6 +278,76 @@ def strategy_ema_cross(cache, all_dates, es="ema13", el="ema21", rsi_thresh=60,
 
 
 # ═══════════════════════════════════════════════════════════
+# 전략 0c-2: EMA 크로스 (3일 이내 크로스 허용)
+# ═══════════════════════════════════════════════════════════
+def strategy_ema_cross_3d(cache, all_dates, es="ema13", el="ema21", rsi_thresh=60,
+                          stop=-5.0, target=5.0, trailing=None, max_hold=10):
+    dates = [d for d in all_dates if START <= d <= END]
+    capital = KR_CAPITAL
+    positions = []
+    trades_pnl = []
+    equity = []
+    for date in dates:
+        for pos in list(positions):
+            c = cache[pos["s"]]
+            if date not in c["di"]: continue
+            idx = c["di"][date]
+            price = c["closes"][idx]
+            pnl_pct = (price - pos["ep"]) / pos["ep"] * 100
+            hold = idx - pos["ei"]
+            pos["hp"] = max(pos.get("hp", pos["ep"]), price)
+            trail_pct = (price - pos["hp"]) / pos["hp"] * 100
+            es_v = c[es]; el_v = c[el]
+            cross_down = idx > 0 and es_v[idx] < el_v[idx] and es_v[idx-1] >= el_v[idx-1]
+            reason = None
+            if pnl_pct <= stop: reason = 1
+            elif pnl_pct >= target: reason = 1
+            elif trailing and trail_pct <= trailing and pos["hp"] > pos["ep"]: reason = 1
+            elif hold >= max_hold: reason = 1
+            elif cross_down: reason = 1
+            if reason:
+                cost = pos["ep"] * pos["q"]
+                rev = price * pos["q"]
+                comm = (cost + rev) * KR_COMMISSION / 100
+                capital += cost + (rev - cost - comm)
+                trades_pnl.append(rev - cost - comm)
+                positions = [p for p in positions if p["s"] != pos["s"]]
+        if len(positions) < 3:
+            candidates = []
+            for sym, c in cache.items():
+                if date not in c["di"] or any(p["s"] == sym for p in positions): continue
+                idx = c["di"][date]
+                if idx < 60 or c["closes"][idx] < 5000: continue
+                es_v = c[es]; el_v = c[el]
+                # 현재 EMA13 > EMA21이어야 함
+                if es_v[idx] <= el_v[idx]: continue
+                # 최근 3일 이내에 크로스 발생 확인
+                cross_found = False
+                for lb in range(1, 4):
+                    prev_idx = idx - lb
+                    if prev_idx >= 0 and es_v[prev_idx] <= el_v[prev_idx]:
+                        cross_found = True
+                        break
+                if not cross_found: continue
+                if c["rsi14"][idx] < rsi_thresh: continue
+                candidates.append((sym, c["rsi14"][idx], idx))
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            for sym, _, idx in candidates[:3 - len(positions)]:
+                c = cache[sym]
+                budget = capital // 3
+                qty = int(budget / c["closes"][idx])
+                if qty <= 0: continue
+                capital -= c["closes"][idx] * qty
+                positions.append({"s": sym, "q": qty, "ep": c["closes"][idx], "ei": idx, "hp": c["closes"][idx]})
+        eq = capital + sum(
+            cache[p["s"]]["closes"][cache[p["s"]]["di"][date]] * p["q"]
+            if date in cache[p["s"]]["di"] else p["ep"] * p["q"]
+            for p in positions)
+        equity.append(eq)
+    return calc_result(trades_pnl, equity, KR_CAPITAL)
+
+
+# ═══════════════════════════════════════════════════════════
 # 전략 0d: ADX + ATR 기반 추세추종 + 추적손절 옵션
 # ═══════════════════════════════════════════════════════════
 def strategy_adx_atr(cache, all_dates, adx_thresh=30, atr_sl=2.5, atr_tp=4.0,

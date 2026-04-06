@@ -123,24 +123,15 @@ def screen_ema_candidates() -> list[dict]:
             stats["low_price"] += 1
             continue
 
-        # 필터 2: EMA 골든크로스 (최근 3일 이내 크로스 발생)
+        # 필터 2: EMA 골든크로스 (당일 크로스 발생)
         ema_short = ema(closes, config.EMA_SHORT)
         ema_long = ema(closes, config.EMA_LONG)
 
-        # 현재 EMA13 > EMA21이어야 함
+        # 오늘 EMA13 > EMA21이고, 전일 EMA13 <= EMA21 (신규 크로스만)
         if ema_short[-1] <= ema_long[-1]:
             stats["no_golden_cross"] += 1
             continue
-
-        # 최근 3일 이내에 크로스가 발생했는지 확인
-        cross_found = False
-        for lookback in range(1, 4):  # [-2], [-3], [-4] 체크
-            idx = -(lookback + 1)
-            if len(ema_short) >= abs(idx) and ema_short[idx] <= ema_long[idx]:
-                cross_found = True
-                break
-
-        if not cross_found:
+        if ema_short[-2] > ema_long[-2]:
             stats["no_golden_cross"] += 1
             continue
 
