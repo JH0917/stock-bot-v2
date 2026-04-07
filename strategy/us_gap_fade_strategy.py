@@ -7,8 +7,8 @@
 백테스트: 코인주 3124건 승률64% 건당+2.70% Sharpe 3.85
 """
 
+import asyncio
 import logging
-import yfinance as yf
 from datetime import date
 from strategy.us_gap_fade_screener import USGapFadeScreener
 import config
@@ -45,33 +45,25 @@ class USGapFadeStrategy:
     # ─────────────────────────────────────────
     async def cache_prev_close(self):
         logger.info("=" * 50)
-        logger.info("[갭페이드] 전일 종가 캐시")
+        logger.info("[갭페이드] 전일 종가 캐시 (KIS API)")
 
         if self.today != date.today():
             self.today = date.today()
             self.daily_pnl = 0.0
             self.daily_trades = 0
 
-        try:
-            data = yf.download(
-                self.screener.symbols, period='2d',
-                auto_adjust=True, progress=False
-            )
-            if data.empty:
-                logger.warning("전일 종가 데이터 없음")
-                return
+        self.prev_close = {}
+        for sym in self.screener.symbols:
+            exchange = self.screener.get_exchange(sym)
+            try:
+                info = await self.executor.get_us_price_info(sym, exchange)
+                if info and info.get('base', 0) > 0:
+                    self.prev_close[sym] = info['base']
+            except Exception as e:
+                logger.debug(f"  {sym} 전일종가 조회 실패: {e}")
+            await asyncio.sleep(0.1)  # API 속도 제한 방지
 
-            close = data['Close']
-            self.prev_close = {}
-            for sym in self.screener.symbols:
-                if sym in close.columns:
-                    val = close[sym].dropna()
-                    if len(val) >= 1:
-                        self.prev_close[sym] = float(val.iloc[-1])
-
-            logger.info(f"전일 종가 {len(self.prev_close)}개 캐시 완료")
-        except Exception as e:
-            logger.error(f"전일 종가 캐시 실패: {e}")
+        logger.info(f"전일 종가 {len(self.prev_close)}개 캐시 완료")
 
     # ─────────────────────────────────────────
     # 2. 갭다운 매수 (22:30)

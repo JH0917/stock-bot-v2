@@ -63,6 +63,22 @@ class Executor:
             logger.error(f"[US] 현재가 조회 실패 {symbol}: {e}")
             return 0.0
 
+    async def get_us_price_info(self, symbol: str, exchange: str = "NAS") -> dict:
+        """해외주식 현재가 + 전일종가 조회
+        Returns: {'last': float, 'base': float} 또는 실패 시 빈 dict
+        """
+        try:
+            data = await self.kis.get_us_price(symbol, exchange)
+            output = data.get("output", {})
+            last = float(output.get("last", 0) or 0)
+            base = float(output.get("base", 0) or 0)
+            if last > 0 and base > 0:
+                return {"last": last, "base": base}
+            return {}
+        except Exception as e:
+            logger.error(f"[US] 시세 조회 실패 {symbol}: {e}")
+            return {}
+
     async def buy_us(self, symbol: str, qty: int, price: float,
                       exchange: str = "NAS") -> dict:
         """해외주식 지정가 매수"""
