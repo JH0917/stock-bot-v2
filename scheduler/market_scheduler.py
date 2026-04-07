@@ -96,14 +96,16 @@ class MarketScheduler:
         await self.gap_fade.close_all()
 
     async def _startup_catch_up(self):
-        """재배포 시 장중이면 즉시 복구"""
+        """재배포 시 22:00~22:35 사이면 즉시 캐시+매수"""
         await asyncio.sleep(3)
         now = datetime.now()
-        h = now.hour
+        h, m = now.hour, now.minute
         wd = now.weekday()
 
-        is_us = (wd <= 4 and h >= 22) or (1 <= wd <= 5 and h < 5)
-        if is_us:
-            logger.info("=== [갭페이드] 장중 재시작 감지 — 즉시 스캔 ===")
+        # 갭다운 매수는 시가 근처에서만 의미 있음 (22:00~22:35)
+        if wd <= 4 and h == 22 and m <= 35:
+            logger.info("=== [갭페이드] 개장 시간 재시작 — 즉시 스캔 ===")
             await self.gap_fade.cache_prev_close()
             await self.gap_fade.execute_entry()
+        else:
+            logger.info(f"=== [갭페이드] 재시작 감지 (시각 {h}:{m:02d}) — 개장 시간 아님, 스캔 생략 ===")
