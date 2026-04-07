@@ -7,13 +7,13 @@ logger = logging.getLogger(__name__)
 
 class USGapFadeScreener:
 
-    COIN = ['MARA','RIOT','CLSK','HUT','COIN','MSTR','BITF','IREN','ETHE','BITO','HOOD']
+    COIN = ['MARA','RIOT','CLSK','HUT','COIN','MSTR','IREN','ETHE','BITO','HOOD']
     LEVERAGE = ['TQQQ','SOXL','FNGU','LABU','TECL','SQQQ','TZA']
     VOLATILE = ['TSLA','NVDA','AMD','PLTR','SOFI','DKNG','RBLX','ROKU','SNAP']
 
     EXCHANGE_MAP = {
         'MARA': 'NAS', 'RIOT': 'NAS', 'CLSK': 'NAS', 'HUT': 'NYS',
-        'COIN': 'NAS', 'MSTR': 'NAS', 'BITF': 'NYS', 'IREN': 'NAS',
+        'COIN': 'NAS', 'MSTR': 'NAS', 'IREN': 'NAS',
         'ETHE': 'NYS', 'BITO': 'NYS', 'HOOD': 'NAS',
         'TQQQ': 'NAS', 'SOXL': 'NYS', 'FNGU': 'NYS', 'LABU': 'NYS',
         'TECL': 'NYS', 'SQQQ': 'NAS', 'TZA': 'NYS',

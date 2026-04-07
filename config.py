@@ -18,7 +18,7 @@ EXCHANGE_RATE_USD_KRW = 1350      # 원/달러 환율
 GAP_FADE_MAX_POSITIONS = 5        # 동시 최대 포지션
 GAP_FADE_MIN_GAP = 0.03           # 최소 갭다운 3%
 GAP_FADE_STOP_LOSS = 0.05         # 장중 손절 -5%
-GAP_FADE_CAPITAL_PER_POS = 0      # 0이면 자동 (총자본/최대포지션)
+GAP_FADE_CAPITAL_PER_POS = 240_000  # 포지션당 24만원
 
 # 모니터링 종목 그룹
 GAP_FADE_GROUPS = ['coin', 'leverage', 'volatile']
