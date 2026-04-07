@@ -1,4 +1,8 @@
-"""Stock Bot v2 — EMA 크로스 + ETF Momentum + US Box 자동매매 봇"""
+"""Stock Bot v2 — 갭 페이딩(롱) 전략 봇
+
+전략: 코인주/레버리지ETF 3%+ 갭다운 → 시가 매수 → 당일 청산
+스케줄: 22:00 캐시 → 22:30 매수 → 15분 모니터 → 04:50 청산
+"""
 
 import logging
 from contextlib import asynccontextmanager
@@ -21,43 +25,31 @@ scheduler = MarketScheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Stock Bot v2 시작")
+    logger.info("Stock Bot v2 시작 — 갭 페이딩 전략")
     scheduler.start()
     yield
     logger.info("Stock Bot v2 종료")
     await scheduler.shutdown()
 
 
-app = FastAPI(title="Stock Bot v2", lifespan=lifespan)
+app = FastAPI(title="Stock Bot v2 — Gap Fade", lifespan=lifespan)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "strategy": "gap_fade"}
 
 
 @app.get("/positions")
 async def positions():
-    return scheduler.risk_manager.get_positions()
+    return scheduler.gap_fade.get_status()
 
 
 @app.get("/report")
 async def report():
-    return {"report": scheduler.risk_manager.daily_report()}
-
-
-@app.get("/state")
-async def state():
-    return scheduler.risk_manager.state
-
-
-@app.get("/us-box/candidates")
-async def us_box_candidates():
-    """최근 US 박스권 스캔 결과"""
-    return scheduler.us_box_strategy._candidates
-
-
-@app.get("/us-box/positions")
-async def us_box_positions():
-    """US 박스권 보유 포지션"""
-    return scheduler.risk_manager.get_positions(strategy="us_box")
+    gf = scheduler.gap_fade
+    return {
+        "daily_pnl_usd": round(gf.daily_pnl, 2),
+        "daily_trades": gf.daily_trades,
+        "positions": len(gf.positions),
+    }

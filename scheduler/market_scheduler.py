@@ -1,20 +1,25 @@
-"""장 스케줄러 — 장전/장중/장후 자동 워크플로우"""
+"""스케줄러 — 갭 페이딩(롱) 전략 전용
+
+미국장 시간 (한국시간):
+  22:00  전일 종가 캐시
+  22:30  장 시작 → 갭다운 매수
+  22:45~ 15분마다 손절 모니터링
+  04:50  전량 매도 (당일 청산 필수)
+"""
 
 import asyncio
 import logging
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from strategy.ema_strategy import EMAStrategy
-from strategy.etf_momentum import ETFMomentumStrategy
-from strategy.us_box_strategy import USBoxStrategy
+from strategy.us_gap_fade_strategy import USGapFadeStrategy
 from trader.risk_manager import RiskManager
 from trader.executor import Executor
-import config
 
 logger = logging.getLogger(__name__)
 
-DOW = "mon-fri"
+DOW = "mon-fri"          # 미국장 개장일 (한국 기준 월~금 밤)
+DOW_LATE = "tue-sat"     # 자정 넘긴 후 (한국 기준 화~토 새벽)
 
 
 class MarketScheduler:
@@ -22,45 +27,49 @@ class MarketScheduler:
         self.scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
         self.executor = Executor()
         self.risk_manager = RiskManager()
-        self.ema_strategy = EMAStrategy(self.risk_manager, self.executor)
-        self.etf_strategy = ETFMomentumStrategy(self.risk_manager, self.executor)
-        self.us_box_strategy = USBoxStrategy(self.risk_manager, self.executor)
+        self.gap_fade = USGapFadeStrategy(self.risk_manager, self.executor)
 
     def start(self):
-        # ─── 주전략: EMA 크로스 진입 (09:05) + 데드크로스 매도 실행 ───
-        self.scheduler.add_job(self._ema_entry, CronTrigger(hour=9, minute=5, day_of_week=DOW), id="ema_entry")
-        # ─── 장 마감 후 데드크로스 체크 (15:35) ───
-        self.scheduler.add_job(self._ema_dead_cross_check, CronTrigger(hour=15, minute=35, day_of_week=DOW), id="ema_dead_cross")
+        # ─── 1. 전일 종가 캐시 (22:00) ───
+        self.scheduler.add_job(
+            self._cache_prev_close,
+            CronTrigger(hour=22, minute=0, day_of_week=DOW),
+            id="gf_cache"
+        )
 
-        # ─── ETF ───
-        self.scheduler.add_job(self._etf_capture_open, CronTrigger(hour=9, minute=0, day_of_week=DOW), id="etf_open")
-        self.scheduler.add_job(self._etf_entry, CronTrigger(hour=9, minute=31, day_of_week=DOW), id="etf_entry")
+        # ─── 2. 갭다운 매수 (22:30) ───
+        self.scheduler.add_job(
+            self._entry,
+            CronTrigger(hour=22, minute=30, day_of_week=DOW),
+            id="gf_entry"
+        )
 
-        # ─── 장중 모니터링 (1분마다, 09:10~15:20) ───
-        self.scheduler.add_job(self._monitor_positions, CronTrigger(hour=9, minute="10-59", second=0, day_of_week=DOW), id="monitor_09")
-        self.scheduler.add_job(self._monitor_positions, CronTrigger(hour="10-14", minute="*", second=0, day_of_week=DOW), id="monitor_10_14")
-        self.scheduler.add_job(self._monitor_positions, CronTrigger(hour=15, minute="0-20", second=0, day_of_week=DOW), id="monitor_15")
+        # ─── 3. 장중 모니터링 (22:45 ~ 04:45, 15분마다) ───
+        self.scheduler.add_job(
+            self._monitor,
+            CronTrigger(hour=22, minute="45", day_of_week=DOW),
+            id="gf_mon_2245"
+        )
+        self.scheduler.add_job(
+            self._monitor,
+            CronTrigger(hour=23, minute="0,15,30,45", day_of_week=DOW),
+            id="gf_mon_23"
+        )
+        self.scheduler.add_job(
+            self._monitor,
+            CronTrigger(hour="0-4", minute="0,15,30,45", day_of_week=DOW_LATE),
+            id="gf_mon_0_4"
+        )
 
-        # ─── 장 마감 ───
-        self.scheduler.add_job(self._etf_close_all, CronTrigger(hour=15, minute=15, day_of_week=DOW), id="etf_close")
-        self.scheduler.add_job(self._daily_report, CronTrigger(hour=15, minute=40, day_of_week=DOW), id="daily_report")
-
-        # ─── 미국장 (서머타임 기준, 한국시간) ───
-        # 22:00 스캔, 22:35 매수, 0:05/2:05 재스캔+매수, 30분마다 모니터링
-        self.scheduler.add_job(self._us_box_scan, CronTrigger(hour=22, minute=0, day_of_week=DOW), id="us_scan")
-        self.scheduler.add_job(self._us_box_entry, CronTrigger(hour=22, minute=35, day_of_week=DOW), id="us_entry")
-        # 장중 재스캔 (0시, 2시) — 새로운 Buy Zone 진입 기회 포착
-        self.scheduler.add_job(self._us_box_rescan, CronTrigger(hour="0,2", minute=5, day_of_week="tue-sat"), id="us_rescan")
-        self.scheduler.add_job(self._us_box_monitor, CronTrigger(hour=22, minute="30,59", day_of_week=DOW), id="us_mon_22")
-        self.scheduler.add_job(self._us_box_monitor, CronTrigger(hour="23", minute="0,30", day_of_week=DOW), id="us_mon_23")
-        self.scheduler.add_job(self._us_box_monitor, CronTrigger(hour="0-4", minute="0,30", day_of_week="tue-sat"), id="us_mon_0_4")
-        self.scheduler.add_job(self._us_box_cancel, CronTrigger(hour=4, minute=50, day_of_week="tue-sat"), id="us_cancel")
-        self.scheduler.add_job(self._us_box_split_check, CronTrigger(hour="0,2,4", minute=0, day_of_week="tue-sat"), id="us_split")
+        # ─── 4. 전량 청산 (04:50) ───
+        self.scheduler.add_job(
+            self._close_all,
+            CronTrigger(hour=4, minute=50, day_of_week=DOW_LATE),
+            id="gf_close"
+        )
 
         self.scheduler.start()
-        logger.info("스케줄러 시작 (국내장 + 미국장)")
-
-        # 시작 시 장중이면 즉시 스캔
+        logger.info("스케줄러 시작 — 갭 페이딩 전략")
         asyncio.ensure_future(self._startup_catch_up())
 
     async def shutdown(self):
@@ -69,97 +78,32 @@ class MarketScheduler:
 
     # ─── 작업 정의 ───
 
-    async def _ema_entry(self):
-        """09:05 — EMA 크로스 스캔 + 매수 실행 + 데드크로스 매도"""
-        logger.info("=== [EMA] 매수/매도 실행 ===")
-        # 데드크로스 매도 먼저
-        await self.ema_strategy.execute_dead_cross_exit()
-        # 신규 매수
-        candidates = await self.ema_strategy.scan_entry()
-        if candidates:
-            await self.ema_strategy.execute_entry(candidates)
+    async def _cache_prev_close(self):
+        logger.info("=== [갭페이드] 전일 종가 캐시 ===")
+        await self.gap_fade.cache_prev_close()
 
-    async def _ema_dead_cross_check(self):
-        """15:35 — 데드크로스 체크 (다음날 매도 예정)"""
-        logger.info("=== [EMA] 데드크로스 체크 ===")
-        await self.ema_strategy.check_dead_cross_exit()
+    async def _entry(self):
+        logger.info("=== [갭페이드] 갭다운 매수 ===")
+        await self.gap_fade.execute_entry()
 
-    async def _etf_capture_open(self):
-        await self.etf_strategy.capture_open()
-
-    async def _etf_entry(self):
-        logger.info("=== ETF 모멘텀 진입 체크 ===")
-        await self.etf_strategy.check_entry()
-
-    async def _monitor_positions(self):
-        """1분마다 — 손절/익절 체크"""
-        if not self.risk_manager.get_positions():
+    async def _monitor(self):
+        if not self.gap_fade.positions:
             return
-        await self.ema_strategy.check_exit()
-        await self.etf_strategy.check_exit()
+        await self.gap_fade.check_exit()
 
-    async def _etf_close_all(self):
-        logger.info("=== ETF 시간 청산 ===")
-        await self.etf_strategy.close_all()
-
-    async def _daily_report(self):
-        report = self.risk_manager.daily_report()
-        logger.info(f"\n{report}")
-
-    # ─── 미국 박스권 전략 ───
-
-    async def _us_box_scan(self):
-        """22:00 — 미국 박스권 일일 스캔"""
-        logger.info("=== [US Box] 일일 스캔 시작 ===")
-        await self.us_box_strategy.daily_scan()
-
-    async def _us_box_entry(self):
-        """22:35 — 미국 박스권 매수 실행"""
-        logger.info("=== [US Box] 매수 실행 ===")
-        await self.us_box_strategy.execute_entry()
-
-    async def _us_box_monitor(self):
-        """30분마다 — 청산 조건 확인 (포지션 있을 때만)"""
-        if not self.risk_manager.get_positions(strategy="us_box"):
-            return
-        await self.us_box_strategy.check_exit()
-
-    async def _us_box_split_check(self):
-        """3시간마다 — 분할매수 추가 진입 확인 (포지션 있을 때만)"""
-        if not self.risk_manager.get_positions(strategy="us_box"):
-            return
-        await self.us_box_strategy.check_split_entry()
-
-    async def _us_box_rescan(self):
-        """0:05, 2:05 — 장중 재스캔 + 매수 (빈 슬롯 있을 때만)"""
-        us_positions = self.risk_manager.get_positions(strategy="us_box")
-        if len(us_positions) >= config.US_BOX_MAX_POSITIONS:
-            logger.info("[US Box] 재스캔 스킵 (최대 포지션 도달)")
-            return
-        logger.info("=== [US Box] 장중 재스캔 시작 ===")
-        await self.us_box_strategy.daily_scan()
-        await self.us_box_strategy.execute_entry()
-
-    async def _us_box_cancel(self):
-        """04:50 — 미체결 주문 취소"""
-        logger.info("=== [US Box] 미체결 주문 정리 ===")
-        await self.us_box_strategy.cancel_stale_orders()
+    async def _close_all(self):
+        logger.info("=== [갭페이드] 전량 매도 ===")
+        await self.gap_fade.close_all()
 
     async def _startup_catch_up(self):
-        """시작 시 장중이면 즉시 스캔 (재배포 대응)"""
-        await asyncio.sleep(3)  # 스케줄러 안정화 대기
+        """재배포 시 장중이면 즉시 복구"""
+        await asyncio.sleep(3)
         now = datetime.now()
-        hour = now.hour
-        weekday = now.weekday()  # 0=월 ~ 6=일
+        h = now.hour
+        wd = now.weekday()
 
-        # 미국장 시간: 22:00~04:50 (월~금 22시 = weekday 0~4, 화~토 0~4시 = weekday 1~5)
-        is_us_session = False
-        if weekday <= 4 and hour >= 22:
-            is_us_session = True
-        elif 1 <= weekday <= 5 and hour < 5:
-            is_us_session = True
-
-        if is_us_session and not self.us_box_strategy._candidates:
-            logger.info("=== [US Box] 시작 시 즉시 스캔 (장중 재배포 감지) ===")
-            await self.us_box_strategy.daily_scan()
-            await self.us_box_strategy.execute_entry()
+        is_us = (wd <= 4 and h >= 22) or (1 <= wd <= 5 and h < 5)
+        if is_us:
+            logger.info("=== [갭페이드] 장중 재시작 감지 — 즉시 스캔 ===")
+            await self.gap_fade.cache_prev_close()
+            await self.gap_fade.execute_entry()
