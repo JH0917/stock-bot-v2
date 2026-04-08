@@ -3,8 +3,7 @@
 
 3%+ 갭다운 종목을 시가에 매수, 장중 되돌림으로 수익, 종가 전 매도.
 공매도 없음. KIS API buy_us() → sell_us()로 완결.
-
-백테스트: 코인주 3124건 승률64% 건당+2.70% Sharpe 3.85
+포지션은 실제 KIS 잔고 기준으로 관리.
 """
 
 import asyncio
@@ -34,11 +33,45 @@ class USGapFadeStrategy:
             min_gap_pct=config.GAP_FADE_MIN_GAP,
         )
 
-        self.positions = {}     # {sym: {entry_price, qty, stop_price, gap_pct, exchange}}
+        # 메모리 캐시 (실제 잔고와 동기화)
+        self.positions = {}     # {sym: {entry_price, qty, stop_price, exchange}}
         self.prev_close = {}
         self.daily_pnl = 0.0
         self.daily_trades = 0
         self.today = None
+
+    # ─────────────────────────────────────────
+    # 실제 잔고 동기화
+    # ─────────────────────────────────────────
+    async def sync_positions(self):
+        """KIS API 실제 보유종목으로 positions 동기화"""
+        try:
+            real = await self.executor.get_us_positions()
+            # 봇 모니터링 대상 종목만 필터
+            monitored = set(self.screener.symbols)
+
+            # 실제 잔고에 있는데 메모리에 없는 종목 추가
+            for sym, info in real.items():
+                if sym in monitored and sym not in self.positions:
+                    exchange = self.screener.get_exchange(sym)
+                    stop = round(info['avg_price'] * (1 - self.stop_loss_pct), 2)
+                    self.positions[sym] = {
+                        'entry_price': info['avg_price'],
+                        'qty': info['qty'],
+                        'stop_price': stop,
+                        'exchange': exchange,
+                    }
+                    logger.info(f"  [동기화] {sym} {info['qty']}주 @${info['avg_price']:.2f} 추가")
+
+            # 메모리에 있는데 실제 잔고에 없는 종목 제거
+            for sym in list(self.positions.keys()):
+                if sym not in real:
+                    logger.info(f"  [동기화] {sym} 잔고 없음 — 제거")
+                    del self.positions[sym]
+
+            logger.info(f"[갭페이드] 잔고 동기화: {len(self.positions)}포지션")
+        except Exception as e:
+            logger.error(f"[갭페이드] 잔고 동기화 실패: {e}")
 
     # ─────────────────────────────────────────
     # 1. 전일 종가 캐시 (22:00)
@@ -61,7 +94,7 @@ class USGapFadeStrategy:
                     self.prev_close[sym] = info['base']
             except Exception as e:
                 logger.debug(f"  {sym} 전일종가 조회 실패: {e}")
-            await asyncio.sleep(0.1)  # API 속도 제한 방지
+            await asyncio.sleep(0.1)
 
         logger.info(f"전일 종가 {len(self.prev_close)}개 캐시 완료")
 
@@ -75,6 +108,9 @@ class USGapFadeStrategy:
             await self.cache_prev_close()
             if not self.prev_close:
                 return
+
+        # 실제 잔고 동기화 후 슬롯 계산
+        await self.sync_positions()
 
         candidates = await self.screener.scan(self.executor, self.prev_close)
         if not candidates:
@@ -113,7 +149,6 @@ class USGapFadeStrategy:
                         'entry_price': price,
                         'qty': qty,
                         'stop_price': stop,
-                        'gap_pct': gap,
                         'exchange': exchange,
                     }
                     entered += 1
@@ -151,7 +186,6 @@ class USGapFadeStrategy:
             entry = pos['entry_price']
             pnl_pct = cur / entry - 1
 
-            # 손절: 진입가 대비 -5% 이하
             if cur <= pos['stop_price']:
                 logger.warning(f"  [손절] {sym} ${entry:.2f}→${cur:.2f} ({pnl_pct*100:+.1f}%)")
                 await self._sell(sym, cur, '손절')
@@ -162,6 +196,9 @@ class USGapFadeStrategy:
     # 4. 전량 매도 (04:50)
     # ─────────────────────────────────────────
     async def close_all(self):
+        # 매도 전 실제 잔고 동기화
+        await self.sync_positions()
+
         if not self.positions:
             logger.info("[갭페이드] 매도할 포지션 없음")
             self._report()
@@ -199,10 +236,10 @@ class USGapFadeStrategy:
             if not result or result.get('rt_cd') != '0':
                 msg = result.get('msg1', '?') if result else '응답없음'
                 logger.error(f"  [매도실패] {symbol}: {msg}")
-                return  # 매도 실패 시 포지션 유지
+                return
         except Exception as e:
             logger.error(f"  [매도실패] {symbol}: {e}")
-            return  # 매도 실패 시 포지션 유지
+            return
 
         if current_price > 0:
             pnl_pct = current_price / entry - 1
@@ -234,7 +271,7 @@ class USGapFadeStrategy:
             'strategy': 'gap_fade_long',
             'positions': {s: {
                 'entry': p['entry_price'], 'qty': p['qty'],
-                'stop': p['stop_price'], 'gap': p['gap_pct'],
+                'stop': p['stop_price'],
             } for s, p in self.positions.items()},
             'count': len(self.positions),
             'daily_pnl_usd': round(self.daily_pnl, 2),

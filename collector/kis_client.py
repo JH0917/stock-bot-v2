@@ -312,8 +312,10 @@ class KISClient:
         logger.info(f"[US] 매도 주문: {symbol} {qty}주 @ ${price:.2f} -> {result.get('msg1', '')}")
         return result
 
-    async def get_us_balance(self) -> dict:
-        """해외주식 잔고 조회"""
+    async def get_us_balance(self, exchange: str = "NASD") -> dict:
+        """해외주식 잔고 조회
+        exchange: NASD(나스닥), NYSE(뉴욕), AMEX(아멕스)
+        """
         headers = await self._headers(self._tr_id("us_balance"))
         resp = await self.client.get(
             "/uapi/overseas-stock/v1/trading/inquire-balance",
@@ -321,7 +323,7 @@ class KISClient:
             params={
                 "CANO": self._acnt_prefix(),
                 "ACNT_PRDT_CD": self._acnt_suffix(),
-                "OVRS_EXCG_CD": "NASD",
+                "OVRS_EXCG_CD": exchange,
                 "TR_CRCY_CD": "USD",
                 "CTX_AREA_FK200": "",
                 "CTX_AREA_NK200": "",

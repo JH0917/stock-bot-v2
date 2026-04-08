@@ -96,3 +96,25 @@ class Executor:
         except Exception as e:
             logger.error(f"[US] 매도 예외 {symbol}: {e}")
             return {"rt_cd": "-1", "msg1": str(e)}
+
+    async def get_us_positions(self) -> dict:
+        """해외주식 실제 보유종목 조회 (NASD + NYSE)
+        Returns: {symbol: {'qty': int, 'avg_price': float, 'exchange': str}, ...}
+        """
+        positions = {}
+        for excg in ["NASD", "NYSE"]:
+            try:
+                data = await self.kis.get_us_balance(excg)
+                for item in data.get("output1", []):
+                    sym = item.get("ovrs_pdno", "")
+                    qty = int(item.get("ovrs_cblc_qty", 0))
+                    avg_price = float(item.get("pchs_avg_pric", 0))
+                    if sym and qty > 0:
+                        positions[sym] = {
+                            'qty': qty,
+                            'avg_price': avg_price,
+                            'exchange': excg,
+                        }
+            except Exception as e:
+                logger.error(f"[US] 잔고 조회 실패 {excg}: {e}")
+        return positions
