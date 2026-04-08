@@ -51,13 +51,13 @@ class MarketScheduler:
         # ═══ 국내장: 장 마감 ═══
         self.scheduler.add_job(self._daily_report, CronTrigger(hour=15, minute=40, day_of_week=DOW), id="daily_report")
 
-        # ═══ 미국장: 갭 페이딩 ═══
-        self.scheduler.add_job(self._gf_cache, CronTrigger(hour=22, minute=0, day_of_week=DOW), id="gf_cache")
-        self.scheduler.add_job(self._gf_entry, CronTrigger(hour=22, minute=30, day_of_week=DOW), id="gf_entry")
-        self.scheduler.add_job(self._gf_monitor, CronTrigger(hour=22, minute="45", day_of_week=DOW), id="gf_mon_2245")
-        self.scheduler.add_job(self._gf_monitor, CronTrigger(hour=23, minute="0,15,30,45", day_of_week=DOW), id="gf_mon_23")
-        self.scheduler.add_job(self._gf_monitor, CronTrigger(hour="0-4", minute="0,15,30,45", day_of_week=DOW_LATE), id="gf_mon_0_4")
-        self.scheduler.add_job(self._gf_close, CronTrigger(hour=4, minute=50, day_of_week=DOW_LATE), id="gf_close")
+        # ═══ 미국장: 갭 페이딩 (비활성화 — 백테스트 버그로 전략 무효 확인) ═══
+        # self.scheduler.add_job(self._gf_cache, CronTrigger(hour=22, minute=0, day_of_week=DOW), id="gf_cache")
+        # self.scheduler.add_job(self._gf_entry, CronTrigger(hour=22, minute=30, day_of_week=DOW), id="gf_entry")
+        # self.scheduler.add_job(self._gf_monitor, CronTrigger(hour=22, minute="45", day_of_week=DOW), id="gf_mon_2245")
+        # self.scheduler.add_job(self._gf_monitor, CronTrigger(hour=23, minute="0,15,30,45", day_of_week=DOW), id="gf_mon_23")
+        # self.scheduler.add_job(self._gf_monitor, CronTrigger(hour="0-4", minute="0,15,30,45", day_of_week=DOW_LATE), id="gf_mon_0_4")
+        # self.scheduler.add_job(self._gf_close, CronTrigger(hour=4, minute=50, day_of_week=DOW_LATE), id="gf_close")
 
         self.scheduler.start()
         logger.info("스케줄러 시작 (국내장 EMA + 미국장 갭페이딩)")
@@ -117,7 +117,7 @@ class MarketScheduler:
         """시작 시 잔고 동기화 + 장중이면 즉시 스캔 (재배포 대응)"""
         await asyncio.sleep(3)
         await self.risk_manager.sync_positions(self.executor.kis)
-        await self.gap_fade.sync_positions()
+        # await self.gap_fade.sync_positions()  # 갭페이드 비활성화
         now = datetime.now()
         hour = now.hour
         weekday = now.weekday()
@@ -125,16 +125,3 @@ class MarketScheduler:
         # 국내장 시간: 09:05~15:20 (월~금)
         if weekday <= 4 and 9 <= hour < 15:
             logger.info("=== [EMA] 장중 재시작 감지 — 포지션 모니터링 재개 ===")
-
-        # 미국장 시간: 22:00~04:50
-        is_us = (weekday <= 4 and hour >= 22) or (1 <= weekday <= 5 and hour < 5)
-        if is_us and hour == 22:
-            if now.minute < 30:
-                # 장 시작 전: 캐시만 (매수는 22:30 스케줄이 처리)
-                logger.info("=== [갭페이드] 장 시작 전 재시작 — 종가 캐시만 ===")
-                await self.gap_fade.cache_prev_close()
-            elif now.minute <= 35:
-                # 장 시작 직후: 캐시 + 매수
-                logger.info("=== [갭페이드] 개장 시간 재시작 — 즉시 스캔 ===")
-                await self.gap_fade.cache_prev_close()
-                await self.gap_fade.execute_entry()
