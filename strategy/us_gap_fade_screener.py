@@ -1,5 +1,6 @@
 """갭 페이딩(롱) 스크리너 — 3%+ 갭다운 종목 감지"""
 
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class USGapFadeScreener:
             except Exception as e:
                 logger.debug(f"{sym} 가격조회 실패: {e}")
                 continue
+            await asyncio.sleep(0.1)
 
             prev = prev_close[sym]
             if prev <= 0:

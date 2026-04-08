@@ -81,6 +81,78 @@ class RiskManager:
         for s in expired:
             del self.state["cooldown"][s]
 
+    # ─── 잔고 동기화 ───
+
+    async def sync_positions(self, kis_client):
+        """KIS 실제 잔고와 positions.json 동기화 (시작 시 1회 호출)"""
+        try:
+            balance = await kis_client.get_balance()
+            if balance.get("rt_cd") != "0":
+                logger.warning(f"[동기화] 잔고 조회 실패: {balance.get('msg1', '')}")
+                return
+
+            if "output1" not in balance:
+                logger.warning("[동기화] 잔고 응답에 output1 없음 — 건너뜀")
+                return
+
+            # KIS 실제 보유 종목 (수량 > 0인 것만)
+            kis_holdings = {}
+            for item in balance["output1"]:
+                qty = int(item.get("hldg_qty", 0))
+                if qty > 0:
+                    kis_holdings[item["pdno"]] = {
+                        "qty": qty,
+                        "avg_price": float(item.get("pchs_avg_pric", 0)),
+                        "name": item.get("prdt_name", ""),
+                    }
+
+            pos_symbols = {p["symbol"] for p in self.positions}
+            changed = False
+
+            # 1. KIS에 있는데 positions.json에 없으면 → 추가
+            for symbol, info in kis_holdings.items():
+                if symbol not in pos_symbols:
+                    self.positions.append({
+                        "symbol": symbol,
+                        "qty": info["qty"],
+                        "entry_price": info["avg_price"],
+                        "high_price": info["avg_price"],
+                        "strategy": "ema",
+                        "entry_date": datetime.now().strftime("%Y%m%d"),
+                    })
+                    logger.info(f"[동기화] 누락 포지션 추가: {symbol}({info['name']}) "
+                                f"{info['qty']}주 @ {info['avg_price']:,.0f}원")
+                    changed = True
+
+            # 2. positions.json에 있는데 KIS에 없으면 → 제거
+            removed = []
+            for pos in self.positions:
+                if pos["strategy"] in ("ema",) and pos["symbol"] not in kis_holdings:
+                    removed.append(pos["symbol"])
+                    logger.info(f"[동기화] 이미 매도된 포지션 제거: {pos['symbol']}")
+                    changed = True
+            if removed:
+                self.positions = [p for p in self.positions if p["symbol"] not in removed]
+
+            # 3. 둘 다 있는데 수량 다르면 → KIS 기준으로 수정 (ema만)
+            for pos in self.positions:
+                if pos["strategy"] == "ema" and pos["symbol"] in kis_holdings:
+                    kis_qty = kis_holdings[pos["symbol"]]["qty"]
+                    if pos["qty"] != kis_qty:
+                        logger.info(f"[동기화] 수량 수정: {pos['symbol']} "
+                                    f"{pos['qty']}주 → {kis_qty}주")
+                        pos["qty"] = kis_qty
+                        changed = True
+
+            if changed:
+                self._save()
+                logger.info(f"[동기화] 완료 — 현재 포지션 {len(self.positions)}개")
+            else:
+                logger.info(f"[동기화] 잔고 일치 — 포지션 {len(self.positions)}개")
+
+        except Exception as e:
+            logger.error(f"[동기화] 실패: {e}")
+
     # ─── 포지션 관리 ───
 
     def add_position(self, symbol: str, qty: int, entry_price: float, strategy: str, entry_date: str, **kwargs):

@@ -109,6 +109,21 @@ class USGapFadeStrategy:
             if not self.prev_close:
                 return
 
+        # 22:00에 못 가져온 종목 재시도 (장 시작 후라 base 잡힘)
+        missing = [s for s in self.screener.symbols if s not in self.prev_close]
+        if missing:
+            logger.info(f"[갭페이드] 전일종가 미수신 {len(missing)}개 재조회")
+            for sym in missing:
+                exchange = self.screener.get_exchange(sym)
+                try:
+                    info = await self.executor.get_us_price_info(sym, exchange)
+                    if info and info.get('base', 0) > 0:
+                        self.prev_close[sym] = info['base']
+                except Exception:
+                    pass
+                await asyncio.sleep(0.1)
+            logger.info(f"전일 종가 {len(self.prev_close)}개 확보")
+
         # 실제 잔고 동기화 후 슬롯 계산
         await self.sync_positions()
 
