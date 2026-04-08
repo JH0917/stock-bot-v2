@@ -26,11 +26,11 @@ TR_ID = {
     # ─── 해외주식 ───
     "us_price": "HHDFS00000300",
     "us_daily_chart": "HHDFS76240000",
-    "us_buy": {"real": "JTTT1002U", "paper": "VTTT1002U"},
-    "us_sell": {"real": "JTTT1006U", "paper": "VTTT1006U"},
+    "us_buy": {"real": "TTTT1002U", "paper": "VTTT1002U"},
+    "us_sell": {"real": "TTTT1006U", "paper": "VTTT1001U"},
     "us_balance": {"real": "JTTT3012R", "paper": "VTTT3012R"},
     "us_order_status": {"real": "JTTT3018R", "paper": "VTTT3018R"},
-    "us_cancel": {"real": "JTTT1004U", "paper": "VTTT1004U"},
+    "us_cancel": {"real": "TTTT1004U", "paper": "VTTT1004U"},
 }
 
 
