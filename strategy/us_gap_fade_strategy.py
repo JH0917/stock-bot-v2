@@ -210,7 +210,10 @@ class USGapFadeStrategy:
                 cur = await self.executor.get_us_current_price(
                     sym, self.positions[sym]['exchange']
                 )
-                await self._sell(sym, cur if cur and cur > 0 else 0, '장마감')
+                if not cur or cur <= 0:
+                    logger.warning(f"  [매도보류] {sym}: 현재가 조회 실패, 다음 사이클 재시도")
+                    continue
+                await self._sell(sym, cur, '장마감')
             except Exception as e:
                 logger.error(f"  [매도에러] {sym}: {e}")
 

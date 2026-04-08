@@ -114,8 +114,10 @@ class MarketScheduler:
     # ─── 공통 ───
 
     async def _startup_catch_up(self):
-        """시작 시 장중이면 즉시 스캔 (재배포 대응)"""
+        """시작 시 잔고 동기화 + 장중이면 즉시 스캔 (재배포 대응)"""
         await asyncio.sleep(3)
+        await self.risk_manager.sync_positions(self.executor.kis)
+        await self.gap_fade.sync_positions()
         now = datetime.now()
         hour = now.hour
         weekday = now.weekday()
