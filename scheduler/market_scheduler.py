@@ -128,7 +128,13 @@ class MarketScheduler:
 
         # 미국장 시간: 22:00~04:50
         is_us = (weekday <= 4 and hour >= 22) or (1 <= weekday <= 5 and hour < 5)
-        if is_us and hour == 22 and now.minute <= 35:
-            logger.info("=== [갭페이드] 개장 시간 재시작 — 즉시 스캔 ===")
-            await self.gap_fade.cache_prev_close()
-            await self.gap_fade.execute_entry()
+        if is_us and hour == 22:
+            if now.minute < 30:
+                # 장 시작 전: 캐시만 (매수는 22:30 스케줄이 처리)
+                logger.info("=== [갭페이드] 장 시작 전 재시작 — 종가 캐시만 ===")
+                await self.gap_fade.cache_prev_close()
+            elif now.minute <= 35:
+                # 장 시작 직후: 캐시 + 매수
+                logger.info("=== [갭페이드] 개장 시간 재시작 — 즉시 스캔 ===")
+                await self.gap_fade.cache_prev_close()
+                await self.gap_fade.execute_entry()

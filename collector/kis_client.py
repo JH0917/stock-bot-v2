@@ -284,7 +284,8 @@ class KISClient:
                 "OVRS_ORD_UNPR": f"{price:.2f}",
             },
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            logger.error(f"[US] 매수 HTTP {resp.status_code}: {resp.text[:200]}")
         result = resp.json()
         logger.info(f"[US] 매수 주문: {symbol} {qty}주 @ ${price:.2f} -> {result.get('msg1', '')}")
         return result
@@ -307,7 +308,8 @@ class KISClient:
                 "OVRS_ORD_UNPR": f"{price:.2f}",
             },
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            logger.error(f"[US] 매도 HTTP {resp.status_code}: {resp.text[:200]}")
         result = resp.json()
         logger.info(f"[US] 매도 주문: {symbol} {qty}주 @ ${price:.2f} -> {result.get('msg1', '')}")
         return result
