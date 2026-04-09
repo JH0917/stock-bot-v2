@@ -36,12 +36,15 @@ class EMAStrategy:
             if not self.risk_manager.is_in_cooldown(c["symbol"])
         ]
 
-        available_slots = config.MAIN_MAX_POSITIONS - self.risk_manager.main_position_count()
-        return filtered[:available_slots]
+        return filtered
 
     async def execute_entry(self, candidates: list[dict]):
         """매수 실행 (09:05 시장가)"""
         for c in candidates:
+            if self.risk_manager.main_position_count() >= config.MAIN_MAX_POSITIONS:
+                logger.info("[EMA] 최대 포지션 도달 — 매수 중단")
+                break
+
             symbol = c["symbol"]
             budget = config.MAIN_CAPITAL // config.MAIN_MAX_POSITIONS
             qty = budget // c["close"]
@@ -79,6 +82,10 @@ class EMAStrategy:
             if pos["high_price"] != old_high:
                 dirty = True
             trailing_pnl = (current_price - pos["high_price"]) / pos["high_price"] * 100
+
+            logger.info(f"[EMA] {symbol} 현재가 {current_price:,} | "
+                        f"수익률 {pnl_pct:+.1f}% | 최고가 {pos['high_price']:,} | "
+                        f"추적 {trailing_pnl:+.1f}% | 보유 {self._hold_days(pos)}일")
 
             reason = None
 
