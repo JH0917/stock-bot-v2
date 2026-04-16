@@ -170,6 +170,7 @@ class RiskManager:
         self._save()
 
     def close_position(self, symbol: str, pnl: int, reason: str, strategy: str = None):
+        self._reset_if_new_period()
         if strategy:
             self.positions = [p for p in self.positions if not (p["symbol"] == symbol and p["strategy"] == strategy)]
         else:
@@ -209,6 +210,7 @@ class RiskManager:
     # ─── 리스크 체크 ───
 
     def can_open_main_position(self) -> bool:
+        self._reset_if_new_period()
         if self.state["daily_pnl"] <= config.DAILY_MAX_LOSS:
             return False
         if self.state["weekly_pnl"] <= config.WEEKLY_MAX_LOSS:
@@ -222,6 +224,7 @@ class RiskManager:
         return True
 
     def can_open_sub_position(self) -> bool:
+        self._reset_if_new_period()
         if self.state["daily_pnl"] <= config.DAILY_MAX_LOSS:
             return False
         if self.state["daily_trades"] >= config.MAX_DAILY_TRADES:
@@ -232,6 +235,7 @@ class RiskManager:
 
     def can_open_us_box_position(self) -> bool:
         """미국 박스권 전략 진입 가능 여부"""
+        self._reset_if_new_period()
         us_pnl = self.state.get("us_daily_pnl", 0)
         if us_pnl <= config.US_DAILY_MAX_LOSS:
             return False
