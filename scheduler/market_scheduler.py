@@ -39,6 +39,10 @@ class MarketScheduler:
         self.gap_fade = USGapFadeStrategy(self.risk_manager, self.executor)
 
     def start(self):
+        # ═══ 국내장: 잔고 동기화 ═══
+        self.scheduler.add_job(self._sync, CronTrigger(hour=9, minute=3, day_of_week=DOW), id="sync_morning")
+        self.scheduler.add_job(self._sync, CronTrigger(hour=13, minute=0, day_of_week=DOW), id="sync_midday")
+
         # ═══ 국내장: EMA 크로스 ═══
         self.scheduler.add_job(self._ema_entry, CronTrigger(hour=9, minute=5, day_of_week=DOW), id="ema_entry")
         self.scheduler.add_job(self._ema_dead_cross_check, CronTrigger(hour=15, minute=35, day_of_week=DOW), id="ema_dead_cross")
@@ -66,6 +70,13 @@ class MarketScheduler:
     async def shutdown(self):
         self.scheduler.shutdown()
         await self.executor.close()
+
+    # ─── 국내장: 잔고 동기화 ───
+
+    async def _sync(self):
+        """잔고 동기화 (09:03, 13:00)"""
+        logger.info("=== [동기화] 잔고 동기화 ===")
+        await self.risk_manager.sync_positions(self.executor.kis)
 
     # ─── 국내장: EMA 전략 ───
 
