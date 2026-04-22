@@ -23,7 +23,7 @@ MAIN_STOP_LOSS_PCT = -4.0     # 고정 손절
 MAIN_TRAILING_STOP_PCT = -2.5 # 추적 손절 (최고점 대비)
 MAIN_TARGET_PROFIT_PCT = 8.0  # 익절 목표 +8%
 MAIN_MAX_HOLD_DAYS = 10       # 최대 보유일
-MAIN_MAX_POSITIONS = 3        # 동시 보유 최대 3종목
+MAIN_MAX_POSITIONS = 4        # 동시 보유 최대 4종목
 MAIN_COOLDOWN_DAYS = 3        # 손절 후 재진입 대기일
 
 # ─── 공용 지표 (US Box, 스크리닝 등에서 사용) ───
@@ -52,7 +52,7 @@ MONTHLY_MAX_LOSS = -200_000   # 월간 최대 손실 20만원
 MAX_DAILY_TRADES = 5          # 일일 최대 매매 횟수
 
 # ─── 스크리닝 ───
-MIN_TRADE_VALUE = 5_000_000_000   # 최소 거래대금 50억
+MIN_TRADE_VALUE = 2_000_000_000   # 최소 거래대금 20억
 MIN_PRICE = 5_000                  # 최소 주가 5,000원
 SCREEN_TOP_N = 20                  # 스크리닝 상위 N개
 
