@@ -1,14 +1,17 @@
-"""주전략: EMA(13/21) 크로스 + RSI(14)>50 트렌드 추종
+"""주전략: EMA(13/21) 크로스 + Chandelier Exit 트렌드 추종
 
 진입: EMA(13) > EMA(21) 골든크로스 + RSI(14) > 50
-청산: 데드크로스 / 익절 +8% / 추적손절 -2.5% / 고정손절 -4% / 최대 10일 보유
+청산: 고정손절 -6% / Chandelier Exit(ATR14×3) / EMA 데드크로스
+     익절 제한 없음, 보유일 제한 없음 → 추세를 끝까지 추종
 
-워크포워드 검증(14개월): +207%, PF=1.98, MDD=-9.1%, 100% 양수 윈도우
+백테스트(4년): +138.8%, 월평균 +3.1%, 승률24%, 페이오프비 6.1x
 """
 
 import logging
 from datetime import datetime, timedelta
 from strategy.screener import screen_ema_candidates
+from strategy.indicators import atr as calc_atr
+from collector.market_data import get_daily_ohlcv
 import config
 
 logger = logging.getLogger(__name__)
@@ -18,6 +21,7 @@ class EMAStrategy:
     def __init__(self, risk_manager, executor):
         self.risk_manager = risk_manager
         self.executor = executor
+        self._atr_cache = {}  # {symbol_YYYYMMDD: atr_value}
 
     async def scan_entry(self) -> list[dict]:
         """매수 후보 스캔 (09:05 실행)"""
@@ -39,17 +43,26 @@ class EMAStrategy:
         return filtered
 
     async def execute_entry(self, candidates: list[dict]):
-        """매수 실행 (09:05 시장가)"""
+        """매수 실행 (09:05 시장가) — 실제 잔액 기반 동적 배분"""
         for c in candidates:
-            if self.risk_manager.main_position_count() >= config.MAIN_MAX_POSITIONS:
+            current_pos = self.risk_manager.main_position_count()
+            if current_pos >= config.MAIN_MAX_POSITIONS:
                 logger.info("[EMA] 최대 포지션 도달 — 매수 중단")
                 break
 
+            # 실제 현금 잔액 조회, 실패 시 고정 배분 fallback
+            cash = await self.executor.get_cash_balance()
+            if cash <= 0:
+                cash = config.MAIN_CAPITAL
+                logger.warning(f"[EMA] 잔액 조회 실패 — fallback {cash:,}원")
+
+            slots = config.MAIN_MAX_POSITIONS - current_pos
+            budget = cash // max(1, slots)
+
             symbol = c["symbol"]
-            budget = config.MAIN_CAPITAL // config.MAIN_MAX_POSITIONS
             qty = budget // c["close"]
             if qty <= 0:
-                logger.warning(f"[EMA] {symbol} 매수 수량 0 (주가 {c['close']:,}원)")
+                logger.warning(f"[EMA] {symbol} 매수 수량 0 (주가 {c['close']:,}원, 예산 {budget:,}원)")
                 continue
 
             result = await self.executor.buy(symbol, qty)
@@ -61,7 +74,7 @@ class EMAStrategy:
                     strategy="ema",
                     entry_date=datetime.now().strftime("%Y%m%d"),
                 )
-                logger.info(f"[EMA] 매수 완료: {symbol} {qty}주 @ {c['close']:,}원")
+                logger.info(f"[EMA] 매수 완료: {symbol} {qty}주 @ {c['close']:,}원 (예산 {budget:,}원)")
 
     async def check_exit(self):
         """청산 조건 확인 (1분마다 실행)"""
@@ -81,29 +94,24 @@ class EMAStrategy:
             pos["high_price"] = max(old_high, current_price)
             if pos["high_price"] != old_high:
                 dirty = True
-            trailing_pnl = (current_price - pos["high_price"]) / pos["high_price"] * 100
+
+            # Chandelier Exit 계산: 최고가 - ATR(14) × 3
+            chandelier_stop = self._calc_chandelier_stop(symbol, pos["high_price"])
 
             logger.info(f"[EMA] {symbol} 현재가 {current_price:,} | "
                         f"수익률 {pnl_pct:+.1f}% | 최고가 {pos['high_price']:,} | "
-                        f"추적 {trailing_pnl:+.1f}% | 보유 {self._hold_days(pos)}일")
+                        f"Chandelier {chandelier_stop:,.0f} | 보유 {self._hold_days(pos)}일")
 
             reason = None
 
-            # 1. 고정 손절
+            # 1. 고정 손절 -6%
             if pnl_pct <= config.MAIN_STOP_LOSS_PCT:
                 reason = f"고정 손절 ({pnl_pct:.1f}%)"
 
-            # 2. 추적 손절 (최고점 대비)
-            elif trailing_pnl <= config.MAIN_TRAILING_STOP_PCT and pos["high_price"] > entry_price:
-                reason = f"추적 손절 (최고점 대비 {trailing_pnl:.1f}%)"
-
-            # 3. 익절 목표
-            elif pnl_pct >= config.MAIN_TARGET_PROFIT_PCT:
-                reason = f"익절 목표 도달 ({pnl_pct:.1f}%)"
-
-            # 4. 최대 보유 기간 초과
-            elif self._hold_days(pos) >= config.MAIN_MAX_HOLD_DAYS:
-                reason = f"최대 보유 {config.MAIN_MAX_HOLD_DAYS}일 도달"
+            # 2. Chandelier Exit: 현재가 < 최고가 - ATR×3
+            elif chandelier_stop > 0 and current_price < chandelier_stop:
+                ch_pct = (current_price - pos["high_price"]) / pos["high_price"] * 100
+                reason = f"Chandelier Exit (최고가 {pos['high_price']:,} - ATR×3, 현재 {current_price:,}, {ch_pct:+.1f}%)"
 
             if reason:
                 await self._sell_position(pos, reason, pnl_pct)
@@ -111,17 +119,36 @@ class EMAStrategy:
         if dirty:
             self.risk_manager._save()
 
+    def _calc_chandelier_stop(self, symbol: str, high_price: float) -> float:
+        """Chandelier Exit 스톱 가격 계산: 최고가 - ATR(14) × 배수"""
+        today = datetime.now().strftime("%Y%m%d")
+        cache_key = f"{symbol}_{today}"
+        if cache_key not in self._atr_cache:
+            data = get_daily_ohlcv(symbol, days=50)
+            if not data or len(data["closes"]) < 15:
+                return 0.0
+            atr_values = calc_atr(data["highs"], data["lows"], data["closes"], 14)
+            self._atr_cache[cache_key] = atr_values[-1]
+        current_atr = self._atr_cache[cache_key]
+        if current_atr <= 0:
+            return 0.0
+        return high_price - current_atr * config.MAIN_ATR_MULT
+
     async def check_dead_cross_exit(self):
         """장 마감 후 데드크로스 체크 (15:35 1회 호출)"""
         from strategy.screener import check_ema_dead_cross
 
         positions = self.risk_manager.get_positions(strategy="ema")
+        dirty = False
         for pos in positions:
             if check_ema_dead_cross(pos["symbol"]):
                 current = await self.executor.get_current_price(pos["symbol"])
                 pnl_pct = (current - pos["entry_price"]) / pos["entry_price"] * 100 if current > 0 else 0
                 logger.info(f"[EMA] {pos['symbol']} 데드크로스 감지 — 다음날 매도 예정")
                 pos["exit_signal"] = True
+                dirty = True
+        if dirty:
+            self.risk_manager._save()
 
     async def execute_dead_cross_exit(self):
         """09:05 — 데드크로스 매도 실행"""
