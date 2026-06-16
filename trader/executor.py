@@ -37,18 +37,6 @@ class Executor:
             logger.error(f"매수 예외 {symbol}: {e}")
             return False
 
-    async def get_cash_balance(self) -> int:
-        """현금 잔액 조회 (원화)"""
-        try:
-            data = await self.kis.get_balance()
-            output2 = data.get("output2", [])
-            if output2:
-                return int(output2[0].get("dnca_tot_amt", 0))
-            return 0
-        except Exception as e:
-            logger.error(f"현금 잔액 조회 실패: {e}")
-            return 0
-
     async def sell(self, symbol: str, qty: int) -> bool:
         """시장가 매도"""
         try:

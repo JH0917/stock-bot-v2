@@ -13,19 +13,17 @@ TOTAL_CAPITAL = 1_000_000  # 총 자본 100만원
 MAIN_CAPITAL = 700_000     # 주전략 70만원
 SUB_CAPITAL = 300_000      # 보조전략 30만원
 
-# ─── 주전략: EMA(13/21) 크로스 + Chandelier Exit 트렌드 추종 ───
-# 진입: EMA(13)>EMA(21) 골든크로스 + RSI(14)>50
-# 청산: 고정손절 -6% / Chandelier Exit(ATR14×3) / EMA 데드크로스
-# 백테스트(4년): +138.8%, 월평균 +3.1%, 승률24% but 페이오프비 6.1x
+# ─── 주전략: EMA(13/21) 크로스 + RSI(14)>50 트렌드 추종 ───
+# 워크포워드 검증: +207%, PF=1.98, MDD=-9.1%, 100% 양수 윈도우 (14개월)
 EMA_SHORT = 13                # 단기 EMA
 EMA_LONG = 21                 # 장기 EMA
 RSI_PERIOD = 14               # RSI 기간
 RSI_ENTRY_THRESHOLD = 50      # RSI(14) > 50 진입 필터
-MAIN_STOP_LOSS_PCT = -6.0     # 고정 손절 -6%
-MAIN_ATR_MULT = 3.0           # Chandelier Exit ATR 배수
-MAIN_TRAILING_STOP_PCT = -2.5 # 추적 손절 (RSI전략/백테스트 엔진에서 사용)
-MAIN_MAX_HOLD_DAYS = 10       # 최대 보유일 (RSI전략/백테스트 엔진에서 사용)
-MAIN_MAX_POSITIONS = 2        # 동시 보유 최대 2종목 (백테스트: 월+6.0%)
+MAIN_STOP_LOSS_PCT = -4.0     # 고정 손절
+MAIN_TRAILING_STOP_PCT = -2.5 # 추적 손절 (최고점 대비)
+MAIN_TARGET_PROFIT_PCT = 8.0  # 익절 목표 +8%
+MAIN_MAX_HOLD_DAYS = 10       # 최대 보유일
+MAIN_MAX_POSITIONS = 4        # 동시 보유 최대 4종목
 MAIN_COOLDOWN_DAYS = 3        # 손절 후 재진입 대기일
 
 # ─── 공용 지표 (US Box, 스크리닝 등에서 사용) ───
